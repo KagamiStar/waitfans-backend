@@ -1,0 +1,80 @@
+server:
+  port: ${WAITFANS_SERVER_PORT:7070}
+  tomcat:
+    uri-encoding: UTF-8
+    connection-timeout: 20000
+    keep-alive-timeout: 60000
+    threads:
+      max: 400
+      min-spare: 10
+
+spring:
+  application:
+    name: waitfans-backend
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${WAITFANS_DB_URL:jdbc:mysql://127.0.0.1:3306/waitfans?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowMultiQueries=true}
+    username: ${WAITFANS_DB_USERNAME:root}
+    password: ${WAITFANS_DB_PASSWORD:}
+    initial-size: 0
+    min-idle: 0
+    max-active: 20
+    max-wait: 60000
+    min-evictable-idle-time-millis: 60000
+    time-between-eviction-runs-millis: 30000
+    validation-query: SELECT 1
+    test-while-idle: true
+    test-on-borrow: false
+    test-on-return: false
+    pool-prepared-statements: true
+    filters: stat,wall
+    max-pool-prepared-statement-per-connection-size: 20
+    use-global-data-source-stat: true
+    connection-properties: druid.stat.mergeSql=true;druid.stat.slowSqlMillis=500
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 30MB
+      resolve-lazily: true
+  redis:
+    database: ${WAITFANS_REDIS_DATABASE:0}
+    host: ${WAITFANS_REDIS_HOST:127.0.0.1}
+    port: ${WAITFANS_REDIS_PORT:6379}
+    password: ${WAITFANS_REDIS_PASSWORD:}
+    timeout: 5000
+    jedis:
+      pool:
+        min-idle: 1
+        max-idle: 10
+        max-active: 100
+        max-wait: -1
+        test-on-borrow: true
+        test-while-idle: true
+        min-evictable-idle-time-millis: 60000
+        time-between-eviction-runs-millis: 30000
+        num-tests-per-eviction-run: -1
+  rabbitmq:
+    dynamic: false
+
+im:
+  port: ${WAITFANS_IM_PORT:7071}
+
+directory:
+  video: ${WAITFANS_VIDEO_DIR:public/video/}
+  chunk: ${WAITFANS_CHUNK_DIR:public/chunk/}
+  cover: ${WAITFANS_COVER_DIR:public/img/cover/}
+
+oss:
+  bucket: ${WAITFANS_OSS_BUCKET:waitfans-local}
+  bucketUrl: ${WAITFANS_OSS_BUCKET_URL:http://127.0.0.1:9000/waitfans-local/}
+  endpoint: ${WAITFANS_OSS_ENDPOINT:http://127.0.0.1:9000}
+  keyId: ${WAITFANS_OSS_KEY_ID:local-development}
+  keySecret: ${WAITFANS_OSS_KEY_SECRET:local-development}
+  idleTimeout: ${WAITFANS_OSS_IDLE_TIMEOUT:10000}
+
+elasticsearch:
+  host: ${WAITFANS_ES_HOST:127.0.0.1}
+  port: ${WAITFANS_ES_PORT:9200}
+  username: ${WAITFANS_ES_USERNAME:}
+  password: ${WAITFANS_ES_PASSWORD:}

@@ -1,0 +1,136 @@
+name: ${COMPOSE_PROJECT_NAME:-waitfans}
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_DATABASE: waitfans
+      MYSQL_USER: ${WAITFANS_DB_USERNAME:?Set WAITFANS_DB_USERNAME}
+      MYSQL_PASSWORD: ${WAITFANS_DB_PASSWORD:?Set WAITFANS_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${WAITFANS_DB_ROOT_PASSWORD:?Set WAITFANS_DB_ROOT_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ../database/waitfans.sql:/docker-entrypoint-initdb.d/001-waitfans.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - backend
+
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    environment:
+      WAITFANS_REDIS_PASSWORD: ${WAITFANS_REDIS_PASSWORD:?Set WAITFANS_REDIS_PASSWORD}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$$WAITFANS_REDIS_PASSWORD"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$WAITFANS_REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - backend
+
+  elasticsearch:
+    build:
+      context: ./elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.ml.enabled: "false"
+      bootstrap.memory_lock: "true"
+      ES_JAVA_OPTS: -Xms${WAITFANS_ES_HEAP:-1g} -Xmx${WAITFANS_ES_HEAP:-1g}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 45s
+    networks:
+      - backend
+
+  elasticsearch-init:
+    image: curlimages/curl:8.10.1
+    restart: "no"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ./elasticsearch/init-indices.sh:/init/init-indices.sh:ro
+      - ../src/main/resources/static/esindex:/mappings:ro
+    entrypoint: ["/bin/sh", "/init/init-indices.sh"]
+    networks:
+      - backend
+
+  backend:
+    image: waitfans-backend:${WAITFANS_IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch-init:
+        condition: service_completed_successfully
+    environment:
+      TZ: Asia/Shanghai
+      WAITFANS_SERVER_PORT: "7070"
+      WAITFANS_IM_PORT: "7071"
+      WAITFANS_DB_URL: jdbc:mysql://mysql:3306/waitfans?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowMultiQueries=true
+      WAITFANS_DB_USERNAME: ${WAITFANS_DB_USERNAME:?Set WAITFANS_DB_USERNAME}
+      WAITFANS_DB_PASSWORD: ${WAITFANS_DB_PASSWORD:?Set WAITFANS_DB_PASSWORD}
+      WAITFANS_REDIS_HOST: redis
+      WAITFANS_REDIS_PORT: "6379"
+      WAITFANS_REDIS_PASSWORD: ${WAITFANS_REDIS_PASSWORD:?Set WAITFANS_REDIS_PASSWORD}
+      WAITFANS_ES_HOST: elasticsearch
+      WAITFANS_ES_PORT: "9200"
+      WAITFANS_VIDEO_DIR: /app/public/video/
+      WAITFANS_CHUNK_DIR: /app/public/chunk/
+      WAITFANS_COVER_DIR: /app/public/img/cover/
+      WAITFANS_OSS_BUCKET: ${WAITFANS_OSS_BUCKET:?Set WAITFANS_OSS_BUCKET}
+      WAITFANS_OSS_BUCKET_URL: ${WAITFANS_OSS_BUCKET_URL:?Set WAITFANS_OSS_BUCKET_URL}
+      WAITFANS_OSS_ENDPOINT: ${WAITFANS_OSS_ENDPOINT:?Set WAITFANS_OSS_ENDPOINT}
+      WAITFANS_OSS_KEY_ID: ${WAITFANS_OSS_KEY_ID:?Set WAITFANS_OSS_KEY_ID}
+      WAITFANS_OSS_KEY_SECRET: ${WAITFANS_OSS_KEY_SECRET:?Set WAITFANS_OSS_KEY_SECRET}
+      JAVA_OPTS: ${WAITFANS_JAVA_OPTS:--XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0}
+    ports:
+      - "${WAITFANS_BIND_ADDRESS:-127.0.0.1}:${WAITFANS_SERVER_PORT:-7070}:7070"
+      - "${WAITFANS_BIND_ADDRESS:-127.0.0.1}:${WAITFANS_IM_PORT:-7071}:7071"
+    volumes:
+      - backend-uploads:/app/public
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  elasticsearch-data:
+  backend-uploads:
