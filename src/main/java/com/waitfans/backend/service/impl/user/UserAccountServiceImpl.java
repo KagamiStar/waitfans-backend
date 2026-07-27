@@ -254,12 +254,19 @@ public class UserAccountServiceImpl implements UserAccountService {
      */
     @Override
     public CustomResponse adminLogin(String username, String password) {
+        CustomResponse customResponse = new CustomResponse();
         UsernamePasswordAuthenticationToken authenticationToken =
                 new UsernamePasswordAuthenticationToken(username, password);
-        Authentication authenticate = authenticationProvider.authenticate(authenticationToken);
+        Authentication authenticate;
+        try {
+            authenticate = authenticationProvider.authenticate(authenticationToken);
+        } catch (Exception e) {
+            customResponse.setCode(403);
+            customResponse.setMessage("账号或密码不正确");
+            return customResponse;
+        }
         UserDetailsImpl loginUser = (UserDetailsImpl) authenticate.getPrincipal();
         User user = loginUser.getUser();
-        CustomResponse customResponse = new CustomResponse();
         // 普通用户无权访问
         if (user.getRole() == 0) {
             customResponse.setCode(403);
