@@ -141,6 +141,13 @@
             <version>3.17.1</version>
         </dependency>
 
+        <!-- 本地开发使用 MinIO（S3 协议），生产环境仍可切换回阿里云 OSS -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>9.0.1</version>
+        </dependency>
+
         <dependency>
             <groupId>commons-beanutils</groupId>
             <artifactId>commons-beanutils</artifactId>

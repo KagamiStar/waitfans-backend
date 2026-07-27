@@ -65,6 +65,10 @@ directory:
   chunk: ${WAITFANS_CHUNK_DIR:public/chunk/}
   cover: ${WAITFANS_COVER_DIR:public/img/cover/}
 
+storage:
+  # 本地默认使用 MinIO；生产部署设置 WAITFANS_STORAGE_PROVIDER=oss
+  provider: ${WAITFANS_STORAGE_PROVIDER:minio}
+
 oss:
   bucket: ${WAITFANS_OSS_BUCKET:waitfans-local}
   bucketUrl: ${WAITFANS_OSS_BUCKET_URL:http://127.0.0.1:9000/waitfans-local/}

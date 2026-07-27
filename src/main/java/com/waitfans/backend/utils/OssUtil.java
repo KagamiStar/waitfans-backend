@@ -4,6 +4,14 @@ import com.aliyun.oss.ClientException;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSException;
 import com.aliyun.oss.model.*;
+import io.minio.ListObjectsArgs;
+import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
+import io.minio.Result;
+import io.minio.StatObjectArgs;
+import io.minio.errors.ErrorResponseException;
+import io.minio.messages.Item;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FilenameUtils;
@@ -14,8 +22,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
 import java.net.URLDecoder;
+import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +33,9 @@ import java.util.UUID;
 @Slf4j
 @Component
 public class OssUtil {
+    @Value("${storage.provider:minio}")
+    private String storageProvider;
+
     @Value("${oss.bucket}")
     private String OSS_BUCKET;
 
@@ -32,8 +45,41 @@ public class OssUtil {
     @Value("${directory.chunk}")
     private String CHUNK_DIRECTORY;   // 分片存储目录
 
-    @Autowired
+    @Autowired(required = false)
     private OSS ossClient;
+
+    @Autowired(required = false)
+    private MinioClient minioClient;
+
+    private boolean useMinio() {
+        return "minio".equalsIgnoreCase(storageProvider);
+    }
+
+    private String publicUrl(String objectName) {
+        return OSS_BUCKET_URL.endsWith("/")
+                ? OSS_BUCKET_URL + objectName
+                : OSS_BUCKET_URL + "/" + objectName;
+    }
+
+    private String contentType(MultipartFile file, String fallback) {
+        return file.getContentType() == null ? fallback : file.getContentType();
+    }
+
+    private void putMinioObject(String objectName, InputStream stream, long size, String contentType)
+            throws IOException {
+        try {
+            minioClient.putObject(
+                    PutObjectArgs.builder()
+                            .bucket(OSS_BUCKET)
+                            .object(objectName)
+                            .stream(stream, size, -1L)
+                            .contentType(contentType)
+                            .build()
+            );
+        } catch (Exception e) {
+            throw new IOException("MinIO 上传失败: " + e.getMessage(), e);
+        }
+    }
 
     /**
      * 往阿里云对象存储上传单张图片
@@ -51,6 +97,15 @@ public class OssUtil {
         // 完整路径名
         String date = new SimpleDateFormat("yyyy-MM-dd").format(new Date()).replace("-", "");
         String filePathName = date + "/img/" + type + "/" + fileName;
+        if (useMinio()) {
+            putMinioObject(
+                    filePathName,
+                    file.getInputStream(),
+                    file.getSize(),
+                    contentType(file, "application/octet-stream")
+            );
+            return publicUrl(filePathName);
+        }
         try {
             ossClient.putObject(
                     OSS_BUCKET, // 仓库名
@@ -64,7 +119,7 @@ public class OssUtil {
             log.error("OSS连接出错了:" + ce.getMessage());
             throw ce;
         }
-        return OSS_BUCKET_URL + filePathName;
+        return publicUrl(filePathName);
     }
 
     /**
@@ -82,6 +137,15 @@ public class OssUtil {
         // 完整路径名
         String date = new SimpleDateFormat("yyyy-MM-dd").format(new Date()).replace("-", "");
         String filePathName = date + "/video/" + fileName;
+        if (useMinio()) {
+            putMinioObject(
+                    filePathName,
+                    file.getInputStream(),
+                    file.getSize(),
+                    contentType(file, "video/mp4")
+            );
+            return publicUrl(filePathName);
+        }
         try {
             ossClient.putObject(
                     OSS_BUCKET, // 仓库名
@@ -95,7 +159,7 @@ public class OssUtil {
             log.error("OSS连接出错了:" + ce.getMessage());
             throw ce;
         }
-        return OSS_BUCKET_URL + filePathName;
+        return publicUrl(filePathName);
     }
 
     /**
@@ -111,13 +175,55 @@ public class OssUtil {
         // 完整路径名
         String date = new SimpleDateFormat("yyyy-MM-dd").format(new Date()).replace("-", "");
         String filePathName = date + "/video/" + fileName;
+        if (useMinio()) {
+            List<File> chunkFiles = new ArrayList<>();
+            long totalSize = 0;
+            for (int chunkIndex = 0; ; chunkIndex++) {
+                File chunkFile = Paths.get(CHUNK_DIRECTORY, hash + "-" + chunkIndex).toFile();
+                if (!chunkFile.exists()) {
+                    if (chunkIndex == 0) {
+                        log.error("没找到任何相关分片文件");
+                        return null;
+                    }
+                    break;
+                }
+                chunkFiles.add(chunkFile);
+                totalSize += chunkFile.length();
+            }
+
+            List<InputStream> streams = new ArrayList<>();
+            try {
+                for (File chunkFile : chunkFiles) {
+                    streams.add(new BufferedInputStream(new FileInputStream(chunkFile)));
+                }
+                try (SequenceInputStream input =
+                             new SequenceInputStream(Collections.enumeration(streams))) {
+                    putMinioObject(filePathName, input, totalSize, "video/mp4");
+                }
+                for (File chunkFile : chunkFiles) {
+                    if (!chunkFile.delete()) {
+                        log.warn("未能删除已上传分片: " + chunkFile.getAbsolutePath());
+                    }
+                }
+            } catch (IOException e) {
+                for (InputStream stream : streams) {
+                    try {
+                        stream.close();
+                    } catch (IOException ignored) {
+                        // 保留原始上传异常
+                    }
+                }
+                throw e;
+            }
+            return publicUrl(filePathName);
+        }
         ObjectMetadata meta = new ObjectMetadata();
         // 设置内容类型为MP4视频
         meta.setContentType("video/mp4");
         int chunkIndex = 0;
         long position = 0; // 追加位置
         while (true) {
-            File chunkFile = new File(CHUNK_DIRECTORY + hash + "-" + chunkIndex);
+            File chunkFile = Paths.get(CHUNK_DIRECTORY, hash + "-" + chunkIndex).toFile();
             if (!chunkFile.exists()) {
                 if (chunkIndex == 0) {
                     log.error("没找到任何相关分片文件");
@@ -146,7 +252,7 @@ public class OssUtil {
             chunkFile.delete(); // 上传完后删除分片
             chunkIndex++;
         }
-        return OSS_BUCKET_URL + filePathName;
+        return publicUrl(filePathName);
     }
 
     /**
@@ -159,6 +265,28 @@ public class OssUtil {
      */
     public boolean uploadChunk(@NonNull MultipartFile file, @NonNull String name) throws IOException {
         String fileName = "chunk/" + name;  // 分片文件在OSS的存储路径名
+        if (useMinio()) {
+            try {
+                minioClient.statObject(
+                        StatObjectArgs.builder().bucket(OSS_BUCKET).object(fileName).build()
+                );
+                return false;
+            } catch (ErrorResponseException e) {
+                String code = e.errorResponse().code();
+                if (!"NoSuchKey".equals(code) && !"NoSuchObject".equals(code)) {
+                    throw new IOException("MinIO 查询分片失败: " + e.getMessage(), e);
+                }
+            } catch (Exception e) {
+                throw new IOException("MinIO 查询分片失败: " + e.getMessage(), e);
+            }
+            putMinioObject(
+                    fileName,
+                    file.getInputStream(),
+                    file.getSize(),
+                    contentType(file, "application/octet-stream")
+            );
+            return true;
+        }
         boolean success = false;
         try {
             // 判断文件是否存在
@@ -184,6 +312,24 @@ public class OssUtil {
      * @return  指定目录下，指定前缀的文件数量
      */
     public int countFiles(@NonNull String prefix) {
+        if (useMinio()) {
+            int count = 0;
+            try {
+                Iterable<Result<Item>> results = minioClient.listObjects(
+                        ListObjectsArgs.builder()
+                                .bucket(OSS_BUCKET)
+                                .prefix(prefix)
+                                .recursive(true)
+                                .build()
+                );
+                for (Result<Item> ignored : results) {
+                    count++;
+                }
+                return count;
+            } catch (Exception e) {
+                throw new IllegalStateException("MinIO 文件统计失败: " + e.getMessage(), e);
+            }
+        }
         int count = 0;
         try {
             ListObjectsRequest listObjectsRequest = new ListObjectsRequest(OSS_BUCKET);
@@ -208,6 +354,28 @@ public class OssUtil {
     public void deleteFiles(@NonNull String prefix) {
         if (prefix.equals("")) {
             log.warn("你正试图删除整个bucket，已拒绝该危险操作");
+            return;
+        }
+        if (useMinio()) {
+            try {
+                Iterable<Result<Item>> results = minioClient.listObjects(
+                        ListObjectsArgs.builder()
+                                .bucket(OSS_BUCKET)
+                                .prefix(prefix)
+                                .recursive(true)
+                                .build()
+                );
+                for (Result<Item> result : results) {
+                    minioClient.removeObject(
+                            RemoveObjectArgs.builder()
+                                    .bucket(OSS_BUCKET)
+                                    .object(result.get().objectName())
+                                    .build()
+                    );
+                }
+            } catch (Exception e) {
+                log.error("MinIO 删除文件失败: " + e.getMessage(), e);
+            }
             return;
         }
         try {

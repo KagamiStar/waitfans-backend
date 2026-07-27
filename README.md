@@ -12,7 +12,7 @@ Waitfans 后端是独立的 Spring Boot 仓库，为 `waitfans-client` 和 `wait
 - Elasticsearch 7.17.16：`127.0.0.1:9200`
 - HTTP API：`127.0.0.1:7070`
 - IM WebSocket：`127.0.0.1:7071/im`
-- 阿里云 OSS：上传功能需要有效的测试配置
+- 阿里云 OSS / MinIO：上传功能需要有效的对象存储配置。**本地开发推荐 MinIO**（见 §3.3）
 
 RabbitMQ 依赖仍保留在项目中，但原业务监听已停用，本地开发无需启动 RabbitMQ。
 
@@ -72,6 +72,49 @@ MySQL 不在默认路径时：
 ```
 
 `initialize-database.ps1` 只允许操作 localhost 上名为 `waitfans` 的数据库。数据库已存在时会拒绝覆盖；`-Force` 会重新导入并可能替换表，仅在确认测试数据可被覆盖时使用。
+
+> **简单方式**：也可以直接在 `3306` 端口上手动创建数据库并导入 SQL，然后修改 `.env.local` 连接信息。
+> ```sql
+> CREATE DATABASE IF NOT EXISTS waitfans DEFAULT CHARACTER SET utf8mb4;
+> CREATE USER IF NOT EXISTS 'waitfans_app'@'localhost' IDENTIFIED BY 'your_password';
+> GRANT ALL PRIVILEGES ON waitfans.* TO 'waitfans_app'@'localhost';
+> ```
+> ```cmd
+> mysql -u root -p waitfans < database\waitfans.sql
+> ```
+
+### 3.3 安装 MinIO（本地对象存储，推荐）
+
+MinIO 是阿里云 OSS 的本地替代方案，无需注册云服务账号。
+
+**下载并启动：**
+
+```powershell
+# 下载
+Invoke-WebRequest -Uri "https://dl.min.io/server/minio/release/windows-amd64/minio.exe" -OutFile "D:\MinIO\minio.exe"
+Invoke-WebRequest -Uri "https://dl.min.io/client/mc/release/windows-amd64/mc.exe" -OutFile "D:\MinIO\mc.exe"
+
+# 创建数据目录
+New-Item -ItemType Directory -Force D:\MinIO\data
+
+# 启动（新开 CMD）
+set MINIO_ROOT_USER=local-development
+set MINIO_ROOT_PASSWORD=local-development
+D:\MinIO\minio.exe server D:\MinIO\data --console-address :9001
+```
+
+**创建 Bucket：**
+
+```powershell
+D:\MinIO\mc.exe alias set local http://127.0.0.1:9000 local-development local-development
+D:\MinIO\mc.exe mb local/waitfans-local
+D:\MinIO\mc.exe anonymous set public local/waitfans-local
+```
+
+> MinIO Web 管理面板：`http://127.0.0.1:9001`（登录账号同上）
+> 后端配置中 `WAITFANS_STORAGE_PROVIDER=minio` 会启用 MinIO 模式。
+
+### 3.4 ES 安装（可选）
 
 ## 4. 日常启动与停止
 
@@ -141,9 +184,19 @@ WAITFANS_REDIS_HOST=127.0.0.1
 WAITFANS_REDIS_PORT=6379
 WAITFANS_ES_HOST=127.0.0.1
 WAITFANS_ES_PORT=9200
+
+# —— MinIO（本地开发推荐）——
+WAITFANS_STORAGE_PROVIDER=minio
+WAITFANS_OSS_BUCKET=waitfans-local
+WAITFANS_OSS_BUCKET_URL=http://127.0.0.1:9000/waitfans-local/
+WAITFANS_OSS_ENDPOINT=http://127.0.0.1:9000
+WAITFANS_OSS_KEY_ID=local-development
+WAITFANS_OSS_KEY_SECRET=local-development
 ```
 
 `.env.local` 只用于本机，禁止提交。视频和图片上传测试前，必须把示例 OSS 占位值替换为有效、权限受限的测试桶配置。
+
+> **MinIO vs OSS**：`WAITFANS_STORAGE_PROVIDER=minio` 会启用 `MinioConfig`，使用 MinIO SDK 上传文件；设为 `oss` 或不设则使用阿里云 OSS SDK。本地开发建议使用 MinIO。
 
 ## 6. 构建
 
@@ -265,4 +318,26 @@ codegraph status .
 
 ## 11. 服务器部署
 
-Docker Compose 部署说明见 [deploy/README.md](deploy/README.md)。部署流程会构建后端镜像、准备 Elasticsearch 插件、初始化索引和数据库，并使用命名卷保存数据。生产环境应通过 Nginx 提供 HTTPS/WSS，并只开放必要端口。
+Docker Compose 部署说明见 [deploy/README.md](deploy/README.md)。部署流程会构建后端镜像、准备 Elasticsearch 插件、初始化索引和数据库，并使用命名卷保存数据。## 12. 已知问题
+
+### 🔴 未解决
+
+| # | 问题 | 位置 | 说明 |
+|---|------|------|------|
+| 1 | `getOneVideo(Integer vid)` 收到非数字参数时抛出 500 | `VideoController.java:131` | 前端轮播图传 `vid=demo-3` 等字符串时抛 `NumberFormatException`，应改为返回 404 |
+| 2 | `cumulativeVideosForVisitor` 内部 `Integer.parseInt` 同理 | `VideoController.java:88` | 同上 |
+
+### 🟡 占位代码
+
+| # | 位置 | 说明 |
+|---|------|------|
+| 1 | `UserVideoController` 等多个 Controller | 部分接口的返回值未与前端完全对齐 |
+| 2 | `application.yml` 中 OSS 默认值指向 `127.0.0.1:9000` | 本地开发可用 MinIO 替代 |
+
+### 🟢 优化项
+
+| # | 项目 | 说明 |
+|---|------|------|
+| 1 | ES 可选化 | ES 不可用时搜索接口返回空结果而非报错 |
+| 2 | 异常处理 | `catch` 块中有 `e.printStackTrace()` 应改为 log 输出 |
+| 3 | 视频合并 | `mergeChunks` 中 OSS 分片上传代码被注释，异步流程依赖 `CompletableFuture`，无失败重试机制 |

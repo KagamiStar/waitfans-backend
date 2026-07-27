@@ -23,6 +23,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Date;
 import java.util.concurrent.*;
@@ -73,6 +74,11 @@ public class VideoUploadServiceImpl implements VideoUploadService {
         CustomResponse customResponse = new CustomResponse();
 
         // 查询本地
+        try {
+            Files.createDirectories(Paths.get(CHUNK_DIRECTORY));
+        } catch (IOException e) {
+            return new CustomResponse(500, "无法创建分片目录", null);
+        }
         // 获取分片文件的存储目录
         File chunkDir = new File(CHUNK_DIRECTORY);
         // 获取存储在目录中的所有分片文件
@@ -102,6 +108,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
     @Override
     public CustomResponse uploadChunk(MultipartFile chunk, String hash, Integer index) throws IOException {
         CustomResponse customResponse = new CustomResponse();
+        Files.createDirectories(Paths.get(CHUNK_DIRECTORY));
         // 构建分片文件名
         String chunkFileName = hash + "-" + index;
 
