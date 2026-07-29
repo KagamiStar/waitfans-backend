@@ -2,6 +2,104 @@
 
 Waitfans 后端是独立的 Spring Boot 仓库，为 `waitfans-client` 和 `waitfans-admin` 提供 HTTP API，并通过 Netty 提供 IM WebSocket 服务。上游项目说明保存在 [UPSTREAM_README.md](UPSTREAM_README.md)，许可证见 [LICENSE](LICENSE)。
 
+> **开发前必读**：所有 AI 和开发者必须遵守 [AGENTS.md](AGENTS.md)。任何文件改动都必须验证并创建 Git 提交后才能结束任务。
+
+## 0. 从干净环境启动
+
+本节给出 Windows PowerShell 下从首次初始化到可访问 API 的完整命令。执行前准备：
+
+- JDK 8，并正确设置 `JAVA_HOME`。
+- MySQL Server 8.0；默认安装路径为 `C:\Program Files\MySQL\MySQL Server 8.0`。
+- WSL Ubuntu，并在发行版内安装 `redis-server`。
+- 首次下载 Maven 和 Elasticsearch 时可以访问互联网。
+
+如果三个仓库位于同一个 `waitfans` 父目录，推荐直接在父目录执行：
+
+```powershell
+# 首次运行
+.\start-all.ps1 -Bootstrap
+
+# 以后日常启动
+.\start-all.ps1
+
+# 停止全部
+.\start-all.ps1 -Stop
+```
+
+真正的启动实现位于 `scripts/start-full-stack.ps1`，根目录脚本只是便捷入口。它会依次管理 MySQL、Redis、Elasticsearch、MinIO、后端、用户端和管理端，并在结束前检查三个 HTTP 入口。使用 `-SkipMinio` 可以只启动不含上传能力的核心环境。
+
+检查基础环境：
+
+```powershell
+java -version
+$env:JAVA_HOME
+Get-Service MySQL80
+wsl --list --verbose
+```
+
+首次安装 Redis：
+
+```powershell
+wsl -d Ubuntu -u root -- bash -lc "apt-get update && apt-get install -y redis-server"
+```
+
+在本仓库根目录创建本地配置：
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+如果已经配置 `JAVA_HOME`，保持 `WAITFANS_JAVA_HOME=` 为空即可；否则填写 JDK 8 的绝对路径。`.env.local` 被 Git 忽略，禁止提交。
+
+初始化项目隔离的 MySQL。脚本创建 `127.0.0.1:3307`、`waitfans` 数据库、`waitfans_app` 用户和随机密码：
+
+```powershell
+.\scripts\setup-local-mysql.ps1
+```
+
+首次安装 Elasticsearch 7.17.16：
+
+```powershell
+$esVersion = '7.17.16'
+$esArchive = Join-Path $env:TEMP "elasticsearch-$esVersion.zip"
+$esRoot = Join-Path (Get-Location) '.runtime\elasticsearch'
+New-Item -ItemType Directory -Force -Path $esRoot | Out-Null
+Invoke-WebRequest `
+  -Uri "https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-$esVersion-windows-x86_64.zip" `
+  -OutFile $esArchive
+Expand-Archive -LiteralPath $esArchive -DestinationPath $esRoot -Force
+```
+
+启动依赖、检查环境、构建并启动后端：
+
+```powershell
+.\scripts\start-local-services.ps1 -RedisWslDistribution Ubuntu
+.\scripts\check-env.ps1
+.\mvnw.cmd -DskipTests package
+.\scripts\start-local-backend.ps1
+```
+
+发行版不叫 `Ubuntu` 时，把参数改成 `wsl --list --quiet` 显示的名称。
+
+验证：
+
+```powershell
+(Invoke-RestMethod http://127.0.0.1:7070/category/getall).code
+(Invoke-RestMethod http://127.0.0.1:7070/search/hot/get).code
+Test-NetConnection 127.0.0.1 -Port 7071
+```
+
+两个 HTTP 请求应输出 `200`，IM 端口检查应显示 `TcpTestSucceeded : True`。根路径返回 `403` 是 Spring Security 的预期行为。
+
+日常启动只需：
+
+```powershell
+.\scripts\start-local-services.ps1 -RedisWslDistribution Ubuntu
+.\scripts\start-local-backend.ps1
+```
+
+测试视频、封面或头像上传前，还需按 §3.3 启动 MinIO。普通浏览、分类、登录和管理端联调不依赖 MinIO。
+
 ## 1. 技术栈与端口
 
 - JDK 8
@@ -24,7 +122,7 @@ RabbitMQ 依赖仍保留在项目中，但原业务监听已停用，本地开�
 
 - MySQL 数据：`.runtime/mysql`
 - Elasticsearch 程序与数据：`.runtime/elasticsearch`
-- Redis：WSL 发行版 `Ubuntu-D`
+- Redis：任意已安装 `redis-server` 的 WSL Ubuntu 发行版
 - 后端日志：`.runtime/logs`
 - 本机密钥和连接配置：`.env.local`
 
@@ -39,7 +137,7 @@ RabbitMQ 依赖仍保留在项目中，但原业务监听已停用，本地开�
 - JDK 8
 - Maven 3.8.7，或允许 Maven Wrapper 首次下载 Maven
 - MySQL Server 8.0，默认安装目录为 `C:\Program Files\MySQL\MySQL Server 8.0`
-- WSL 与 `Ubuntu-D`，其中已安装 `redis-server`
+- WSL Ubuntu，其中已安装 `redis-server`
 
 Elasticsearch 由仓库脚本管理在 `.runtime/elasticsearch` 下。
 
@@ -116,6 +214,27 @@ D:\MinIO\mc.exe anonymous set public local/waitfans-local
 
 ### 3.4 ES 安装（可选）
 
+标准启动脚本会启动 Elasticsearch，因此使用 `start-local-services.ps1` 时必须先安装。下载并解压到脚本能够自动发现的目录：
+
+```powershell
+$esVersion = '7.17.16'
+$esArchive = Join-Path $env:TEMP "elasticsearch-$esVersion.zip"
+$esRoot = Join-Path (Get-Location) '.runtime\elasticsearch'
+New-Item -ItemType Directory -Force -Path $esRoot | Out-Null
+Invoke-WebRequest `
+  -Uri "https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-$esVersion-windows-x86_64.zip" `
+  -OutFile $esArchive
+Expand-Archive -LiteralPath $esArchive -DestinationPath $esRoot -Force
+```
+
+安装结果应包含：
+
+```text
+.runtime/elasticsearch/elasticsearch-7.17.16/bin/elasticsearch.bat
+```
+
+如果只想临时启动不依赖搜索的功能，可以单独启动 MySQL 和 Redis，再运行后端；但搜索、热搜同步等相关能力可能不可用。
+
 ## 4. 日常启动与停止
 
 启动 MySQL、Redis 和 Elasticsearch，并执行环境检查：
@@ -177,7 +296,7 @@ D:\MinIO\mc.exe anonymous set public local/waitfans-local
 ```dotenv
 WAITFANS_SERVER_PORT=7070
 WAITFANS_IM_PORT=7071
-WAITFANS_DB_URL=jdbc:mysql://127.0.0.1:3307/waitfans
+WAITFANS_DB_URL=jdbc:mysql://127.0.0.1:3307/waitfans?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowMultiQueries=true&allowPublicKeyRetrieval=true
 WAITFANS_DB_USERNAME=waitfans_app
 WAITFANS_DB_PASSWORD=本机生成的密码
 WAITFANS_REDIS_HOST=127.0.0.1

@@ -66,7 +66,7 @@ function Set-LocalEnvironment {
     )
 
     $values = [ordered]@{
-        "WAITFANS_DB_URL" = "jdbc:mysql://127.0.0.1:$Port/waitfans?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowMultiQueries=true"
+        "WAITFANS_DB_URL" = "jdbc:mysql://127.0.0.1:$Port/waitfans?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowMultiQueries=true&allowPublicKeyRetrieval=true"
         "WAITFANS_DB_USERNAME" = "waitfans_app"
         "WAITFANS_DB_PASSWORD" = $AppPassword
         "WAITFANS_REDIS_HOST" = "127.0.0.1"
