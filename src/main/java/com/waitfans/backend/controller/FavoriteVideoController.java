@@ -56,11 +56,13 @@ public class FavoriteVideoController {
      */
     @PostMapping("/video/collect")
     public CustomResponse collectVideo(@RequestParam("vid") Integer vid,
-                                       @RequestParam("adds") String[] addArray,
-                                       @RequestParam("removes") String[] removeArray) {
+                                       @RequestParam(value = "adds", required = false) String[] addArray,
+                                       @RequestParam(value = "removes", required = false) String[] removeArray) {
         CustomResponse customResponse = new CustomResponse();
         Integer uid = currentUser.getUserId();
         Set<Integer> fids = findFidsOfUserFavorites(uid);
+        if (addArray == null) addArray = new String[0];
+        if (removeArray == null) removeArray = new String[0];
         Set<Integer> addSet = Arrays.stream(addArray).map(Integer::parseInt).collect(Collectors.toSet());
         Set<Integer> removeSet = Arrays.stream(removeArray).map(Integer::parseInt).collect(Collectors.toSet());
         boolean allElementsInFids = fids.containsAll(addSet) && fids.containsAll(removeSet);    // 判断添加或移出的收藏夹是否都属于该用户

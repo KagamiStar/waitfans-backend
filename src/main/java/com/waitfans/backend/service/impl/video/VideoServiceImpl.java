@@ -427,9 +427,9 @@ public class VideoServiceImpl implements VideoService {
             }
             if (Objects.equals(userId, video.getUid()) || currentUser.isAdmin()) {
                 String videoUrl = video.getVideoUrl();
-                String videoPrefix = videoUrl.split("aliyuncs.com/")[1];  // OSS视频文件名
+                String videoPrefix = ossUtil.objectNameFromUrl(videoUrl);
                 String coverUrl = video.getCoverUrl();
-                String coverPrefix = coverUrl.split("aliyuncs.com/")[1];  // OSS封面文件名
+                String coverPrefix = ossUtil.objectNameFromUrl(coverUrl);
                 Integer lastStatus = video.getStatus();
                 UpdateWrapper<Video> updateWrapper = new UpdateWrapper<>();
                 updateWrapper.eq("vid", vid).set("status", 3).set("delete_date", new Date());     // 更新视频状态已删除

@@ -61,6 +61,33 @@ public class OssUtil {
                 : OSS_BUCKET_URL + "/" + objectName;
     }
 
+    /**
+     * 将数据库中保存的公开访问地址还原为对象存储中的对象名。
+     * 同时兼容阿里云 OSS 和本地 MinIO 的 bucketUrl 配置。
+     */
+    public String objectNameFromUrl(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            return "";
+        }
+        String normalizedBase = OSS_BUCKET_URL.endsWith("/")
+                ? OSS_BUCKET_URL
+                : OSS_BUCKET_URL + "/";
+        String objectName;
+        if (url.startsWith(normalizedBase)) {
+            objectName = url.substring(normalizedBase.length());
+        } else {
+            int schemeIndex = url.indexOf("://");
+            int pathIndex = schemeIndex >= 0 ? url.indexOf('/', schemeIndex + 3) : -1;
+            objectName = pathIndex >= 0 ? url.substring(pathIndex + 1) : url;
+            if (objectName.startsWith(OSS_BUCKET + "/")) {
+                objectName = objectName.substring(OSS_BUCKET.length() + 1);
+            }
+        }
+        int queryIndex = objectName.indexOf('?');
+        return (queryIndex >= 0 ? objectName.substring(0, queryIndex) : objectName)
+                .replaceFirst("^/+", "");
+    }
+
     private String contentType(MultipartFile file, String fallback) {
         return file.getContentType() == null ? fallback : file.getContentType();
     }

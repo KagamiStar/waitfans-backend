@@ -260,7 +260,11 @@ public class VideoController {
         CustomResponse customResponse = new CustomResponse();
         Set<Object> set;
         if (rule == 1) {
-            set = redisUtil.zReverange("favorite_video:" + fid, (long) (page - 1) * quantity, (long) page * quantity);
+            set = redisUtil.zReverange(
+                    "favorite_video:" + fid,
+                    (long) (page - 1) * quantity,
+                    (long) page * quantity - 1
+            );
         } else {
             set = redisUtil.zReverange("favorite_video:" + fid, 0, -1);
         }
@@ -275,7 +279,7 @@ public class VideoController {
         List<Map<String, Object>> result;
         switch (rule) {
             case 1:
-                result = videoService.getVideosWithDataByIdsOrderByDesc(list, null, page, quantity);
+                result = videoService.getVideosWithDataByIdsOrderByDesc(list, null, 1, list.size());
                 break;
             case 2:
                 result = videoService.getVideosWithDataByIdsOrderByDesc(list, "play", page, quantity);
