@@ -57,6 +57,12 @@ spring:
   rabbitmq:
     dynamic: false
 
+waitfans:
+  database:
+    core: ${WAITFANS_DB_CORE:waitfans}
+    carousel: ${WAITFANS_DB_CAROUSEL:waitfans_carousel}
+    video-prefix: ${WAITFANS_DB_VIDEO_PREFIX:waitfans_video_}
+
 im:
   port: ${WAITFANS_IM_PORT:7071}
 

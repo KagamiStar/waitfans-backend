@@ -1,5 +1,7 @@
 # Waitfans Backend
 
+> 数据库拆分、表归属、迁移和备份规则见 [docs/数据库数据归属.md](docs/数据库数据归属.md)。
+
 Waitfans 后端是独立的 Spring Boot 仓库，为 `waitfans-client` 和 `waitfans-admin` 提供 HTTP API，并通过 Netty 提供 IM WebSocket 服务。上游项目说明保存在 [UPSTREAM_README.md](UPSTREAM_README.md)，许可证见 [LICENSE](LICENSE)。
 
 > **开发前必读**：所有 AI 和开发者必须遵守 [AGENTS.md](AGENTS.md)。任何文件改动都必须验证并创建 Git 提交后才能结束任务。

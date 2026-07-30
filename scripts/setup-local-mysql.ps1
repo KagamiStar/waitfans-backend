@@ -12,8 +12,38 @@ $configPath = Join-Path $runtimeRoot "my.ini"
 $rootPasswordPath = Join-Path $runtimeRoot ".root-password"
 $envPath = Join-Path $projectRoot ".env.local"
 $sqlPath = Join-Path $projectRoot "database\waitfans.sql"
+$layoutSqlPath = Join-Path $projectRoot "database\sharded-layout.sql"
 $mysqld = Join-Path $MySqlHome "bin\mysqld.exe"
 $mysql = Join-Path $MySqlHome "bin\mysql.exe"
+$managedDatabases = @(
+    "waitfans",
+    "waitfans_carousel",
+    "waitfans_video_anime",
+    "waitfans_video_guochuang",
+    "waitfans_video_douga",
+    "waitfans_video_game",
+    "waitfans_video_kichiku",
+    "waitfans_video_music",
+    "waitfans_video_dance",
+    "waitfans_video_cinephile",
+    "waitfans_video_ent",
+    "waitfans_video_knowledge",
+    "waitfans_video_tech",
+    "waitfans_video_information",
+    "waitfans_video_food",
+    "waitfans_video_life",
+    "waitfans_video_car",
+    "waitfans_video_fashion",
+    "waitfans_video_sports",
+    "waitfans_video_animal",
+    "waitfans_video_virtual"
+)
+$databaseSql = ($managedDatabases | ForEach-Object {
+    "CREATE DATABASE IF NOT EXISTS ``$_`` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+}) -join "`n"
+$grantSql = ($managedDatabases | ForEach-Object {
+    "GRANT ALL PRIVILEGES ON ``$_``.* TO 'waitfans_app'@'localhost';"
+}) -join "`n"
 
 function New-RandomPassword {
     param([int]$Length = 32)
@@ -107,6 +137,9 @@ if (-not (Test-Path -LiteralPath $mysqld) -or -not (Test-Path -LiteralPath $mysq
 if (-not (Test-Path -LiteralPath $sqlPath)) {
     throw "Database script not found: $sqlPath"
 }
+if (-not (Test-Path -LiteralPath $layoutSqlPath)) {
+    throw "Database script not found: $layoutSqlPath"
+}
 
 New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
 $hasExistingData = (Test-Path -LiteralPath $dataDir) -and
@@ -144,10 +177,10 @@ if ($hasExistingData) {
     $rootPassword = (Get-Content -Raw -LiteralPath $rootPasswordPath).Trim()
     $appPassword = New-RandomPassword
     $resumeSql = @"
-CREATE DATABASE IF NOT EXISTS waitfans CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+$databaseSql
 CREATE USER IF NOT EXISTS 'waitfans_app'@'localhost' IDENTIFIED BY '$appPassword';
 ALTER USER 'waitfans_app'@'localhost' IDENTIFIED BY '$appPassword';
-GRANT ALL PRIVILEGES ON waitfans.* TO 'waitfans_app'@'localhost';
+$grantSql
 FLUSH PRIVILEGES;
 "@
     $previousMysqlPassword = $env:MYSQL_PWD
@@ -161,6 +194,34 @@ FLUSH PRIVILEGES;
             "--execute=$resumeSql"
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to refresh the local Waitfans application credentials."
+        }
+
+        $videoObjectType = & $mysql `
+            --protocol=TCP `
+            --host=127.0.0.1 `
+            "--port=$Port" `
+            --user=root `
+            --batch `
+            --skip-column-names `
+            "--execute=SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'waitfans' AND TABLE_NAME = 'video';"
+        if ($videoObjectType -eq "BASE TABLE") {
+            $layoutArgs = @(
+                "--protocol=TCP",
+                "--host=127.0.0.1",
+                "--port=$Port",
+                "--user=root",
+                "--default-character-set=utf8mb4"
+            )
+            $layoutProcess = Start-Process `
+                -FilePath $mysql `
+                -ArgumentList $layoutArgs `
+                -RedirectStandardInput $layoutSqlPath `
+                -NoNewWindow `
+                -Wait `
+                -PassThru
+            if ($layoutProcess.ExitCode -ne 0) {
+                throw "Failed to migrate the existing database to the partitioned video layout."
+            }
         }
     }
     finally {
@@ -216,9 +277,9 @@ $rootPassword = New-RandomPassword
 $appPassword = New-RandomPassword
 $adminSql = @"
 ALTER USER 'root'@'localhost' IDENTIFIED BY '$rootPassword';
-CREATE DATABASE waitfans CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+$databaseSql
 CREATE USER 'waitfans_app'@'localhost' IDENTIFIED BY '$appPassword';
-GRANT ALL PRIVILEGES ON waitfans.* TO 'waitfans_app'@'localhost';
+$grantSql
 FLUSH PRIVILEGES;
 "@
 
@@ -253,6 +314,24 @@ try {
         -PassThru
     if ($import.ExitCode -ne 0) {
         throw "Failed to import database\waitfans.sql."
+    }
+
+    $layoutArgs = @(
+        "--protocol=TCP",
+        "--host=127.0.0.1",
+        "--port=$Port",
+        "--user=waitfans_app",
+        "--default-character-set=utf8mb4"
+    )
+    $layoutProcess = Start-Process `
+        -FilePath $mysql `
+        -ArgumentList $layoutArgs `
+        -RedirectStandardInput $layoutSqlPath `
+        -NoNewWindow `
+        -Wait `
+        -PassThru
+    if ($layoutProcess.ExitCode -ne 0) {
+        throw "Failed to import database\sharded-layout.sql."
     }
 }
 finally {

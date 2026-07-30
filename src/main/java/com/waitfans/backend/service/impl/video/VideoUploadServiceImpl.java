@@ -1,12 +1,11 @@
 package com.waitfans.backend.service.impl.video;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.waitfans.backend.mapper.VideoMapper;
-import com.waitfans.backend.mapper.VideoStatsMapper;
 import com.waitfans.backend.pojo.CustomResponse;
 import com.waitfans.backend.pojo.Video;
 import com.waitfans.backend.pojo.VideoStats;
 import com.waitfans.backend.pojo.dto.VideoUploadInfoDTO;
+import com.waitfans.backend.repository.PartitionedVideoStore;
 import com.waitfans.backend.service.utils.CurrentUser;
 import com.waitfans.backend.service.video.VideoUploadService;
 import com.waitfans.backend.utils.ESUtil;
@@ -40,10 +39,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
     private String CHUNK_DIRECTORY;   // 分片存储目录
 
     @Autowired
-    private VideoMapper videoMapper;
-
-    @Autowired
-    private VideoStatsMapper videoStatsMapper;
+    private PartitionedVideoStore partitionedVideoStore;
 
     @Autowired
     private RedisUtil redisUtil;
@@ -308,9 +304,8 @@ public class VideoUploadServiceImpl implements VideoUploadService {
                 now,
                 null
         );
-        videoMapper.insert(video);
         VideoStats videoStats = new VideoStats(video.getVid(),0,0,0,0,0,0,0,0);
-        videoStatsMapper.insert(videoStats);
+        partitionedVideoStore.insertVideoWithStats(video, videoStats);
         esUtil.addVideo(video);
         CompletableFuture.runAsync(() -> redisUtil.setExObjectValue("video:" + video.getVid(), video), taskExecutor);
         CompletableFuture.runAsync(() -> redisUtil.addMember("video_status:0", video.getVid()), taskExecutor);

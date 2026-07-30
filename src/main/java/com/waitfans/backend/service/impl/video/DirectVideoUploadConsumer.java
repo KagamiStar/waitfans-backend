@@ -1,11 +1,10 @@
 package com.waitfans.backend.service.impl.video;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.waitfans.backend.mapper.VideoMapper;
-import com.waitfans.backend.mapper.VideoStatsMapper;
 import com.waitfans.backend.pojo.Video;
 import com.waitfans.backend.pojo.VideoStats;
 import com.waitfans.backend.pojo.dto.VideoUploadInfoDTO;
+import com.waitfans.backend.repository.PartitionedVideoStore;
 import com.waitfans.backend.utils.ESUtil;
 import com.waitfans.backend.utils.OssUtil;
 import com.waitfans.backend.utils.RedisUtil;
@@ -36,10 +35,7 @@ public class DirectVideoUploadConsumer {
     private String CHUNK_DIRECTORY;   // 分片存储目录
 
     @Autowired
-    private VideoMapper videoMapper;
-
-    @Autowired
-    private VideoStatsMapper videoStatsMapper;
+    private PartitionedVideoStore partitionedVideoStore;
 
     @Autowired
     private RedisUtil redisUtil;
@@ -132,10 +128,8 @@ public class DirectVideoUploadConsumer {
                 now,
                 null
         );
-        videoMapper.insert(video);
-
         VideoStats videoStats = new VideoStats(video.getVid(),0,0,0,0,0,0,0,0);
-        videoStatsMapper.insert(videoStats);
+        partitionedVideoStore.insertVideoWithStats(video, videoStats);
         esUtil.addVideo(video);
         CompletableFuture.runAsync(() -> redisUtil.setExObjectValue("video:" + video.getVid(), video), taskExecutor);
         CompletableFuture.runAsync(() -> redisUtil.addMember("video_status:0", video.getVid()), taskExecutor);

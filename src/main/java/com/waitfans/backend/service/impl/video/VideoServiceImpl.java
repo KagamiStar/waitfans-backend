@@ -1,12 +1,12 @@
 package com.waitfans.backend.service.impl.video;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.waitfans.backend.mapper.VideoMapper;
 import com.waitfans.backend.mapper.VideoStatsMapper;
 import com.waitfans.backend.pojo.CustomResponse;
 import com.waitfans.backend.pojo.Video;
 import com.waitfans.backend.pojo.VideoStats;
+import com.waitfans.backend.repository.PartitionedVideoStore;
 import com.waitfans.backend.service.category.CategoryService;
 import com.waitfans.backend.service.user.UserService;
 import com.waitfans.backend.service.utils.CurrentUser;
@@ -41,6 +41,9 @@ public class VideoServiceImpl implements VideoService {
 
     @Autowired
     private VideoStatsMapper videoStatsMapper;
+
+    @Autowired
+    private PartitionedVideoStore partitionedVideoStore;
 
     @Autowired
     private UserService userService;
@@ -368,9 +371,9 @@ public class VideoServiceImpl implements VideoService {
                 }
                 Integer lastStatus = video.getStatus();
                 video.setStatus(1);
-                UpdateWrapper<Video> updateWrapper = new UpdateWrapper<>();
-                updateWrapper.eq("vid", vid).set("status", 1).set("upload_date", new Date());     // 更新视频状态审核通过
-                int flag = videoMapper.update(null, updateWrapper);
+                Date statusDate = new Date();
+                video.setUploadDate(statusDate);
+                int flag = partitionedVideoStore.updateStatus(vid, 1, statusDate);
                 if (flag > 0) {
                     // 更新成功
                     esUtil.updateVideo(video);  // 更新ES视频文档
@@ -398,9 +401,7 @@ public class VideoServiceImpl implements VideoService {
                 }
                 Integer lastStatus = video.getStatus();
                 video.setStatus(2);
-                UpdateWrapper<Video> updateWrapper = new UpdateWrapper<>();
-                updateWrapper.eq("vid", vid).set("status", 2);     // 更新视频状态审核不通过
-                int flag = videoMapper.update(null, updateWrapper);
+                int flag = partitionedVideoStore.updateStatus(vid, 2, new Date());
                 if (flag > 0) {
                     // 更新成功
                     esUtil.updateVideo(video);  // 更新ES视频文档
@@ -431,9 +432,9 @@ public class VideoServiceImpl implements VideoService {
                 String coverUrl = video.getCoverUrl();
                 String coverPrefix = ossUtil.objectNameFromUrl(coverUrl);
                 Integer lastStatus = video.getStatus();
-                UpdateWrapper<Video> updateWrapper = new UpdateWrapper<>();
-                updateWrapper.eq("vid", vid).set("status", 3).set("delete_date", new Date());     // 更新视频状态已删除
-                int flag = videoMapper.update(null, updateWrapper);
+                Date deleteDate = new Date();
+                video.setDeleteDate(deleteDate);
+                int flag = partitionedVideoStore.updateStatus(vid, 3, deleteDate);
                 if (flag > 0) {
                     // 更新成功
                     esUtil.deleteVideo(vid);

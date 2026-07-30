@@ -4,12 +4,14 @@ import com.aliyun.oss.ClientException;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSException;
 import com.aliyun.oss.model.*;
+import io.minio.GetObjectArgs;
 import io.minio.ListObjectsArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.Result;
 import io.minio.StatObjectArgs;
+import io.minio.StatObjectResponse;
 import io.minio.errors.ErrorResponseException;
 import io.minio.messages.Item;
 import lombok.NonNull;
@@ -86,6 +88,86 @@ public class OssUtil {
         int queryIndex = objectName.indexOf('?');
         return (queryIndex >= 0 ? objectName.substring(0, queryIndex) : objectName)
                 .replaceFirst("^/+", "");
+    }
+
+    public StoredObjectMetadata getObjectMetadata(String url) throws IOException {
+        String objectName = objectNameFromUrl(url);
+        if (objectName.isEmpty()) {
+            throw new FileNotFoundException("Object URL is empty");
+        }
+        if (useMinio()) {
+            try {
+                StatObjectResponse response = minioClient.statObject(
+                        StatObjectArgs.builder().bucket(OSS_BUCKET).object(objectName).build()
+                );
+                String contentType = response.contentType();
+                return new StoredObjectMetadata(
+                        response.size(),
+                        contentType == null ? "application/octet-stream" : contentType
+                );
+            } catch (Exception e) {
+                throw new IOException("MinIO object metadata lookup failed: " + e.getMessage(), e);
+            }
+        }
+        try {
+            ObjectMetadata metadata = ossClient.getObjectMetadata(OSS_BUCKET, objectName);
+            String contentType = metadata.getContentType();
+            return new StoredObjectMetadata(
+                    metadata.getContentLength(),
+                    contentType == null ? "application/octet-stream" : contentType
+            );
+        } catch (RuntimeException e) {
+            throw new IOException("OSS object metadata lookup failed: " + e.getMessage(), e);
+        }
+    }
+
+    public InputStream openObjectRange(String url, long offset, long length) throws IOException {
+        String objectName = objectNameFromUrl(url);
+        if (objectName.isEmpty()) {
+            throw new FileNotFoundException("Object URL is empty");
+        }
+        if (offset < 0 || length <= 0) {
+            throw new IllegalArgumentException("Invalid object byte range");
+        }
+        if (useMinio()) {
+            try {
+                return minioClient.getObject(
+                        GetObjectArgs.builder()
+                                .bucket(OSS_BUCKET)
+                                .object(objectName)
+                                .offset(offset)
+                                .length(length)
+                                .build()
+                );
+            } catch (Exception e) {
+                throw new IOException("MinIO object download failed: " + e.getMessage(), e);
+            }
+        }
+        try {
+            GetObjectRequest request = new GetObjectRequest(OSS_BUCKET, objectName);
+            request.setRange(offset, offset + length - 1);
+            return ossClient.getObject(request).getObjectContent();
+        } catch (RuntimeException e) {
+            throw new IOException("OSS object download failed: " + e.getMessage(), e);
+        }
+    }
+
+    public static class StoredObjectMetadata {
+        private final long size;
+        private final String contentType;
+
+        public StoredObjectMetadata(long size, String contentType) {
+            this.size = size;
+            this.contentType = contentType;
+        }
+
+        public long getSize() {
+            return size;
+        }
+
+        public String getContentType() {
+            return contentType;
+        }
     }
 
     private String contentType(MultipartFile file, String fallback) {

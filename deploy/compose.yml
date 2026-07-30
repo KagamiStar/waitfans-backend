@@ -17,6 +17,8 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ../database/waitfans.sql:/docker-entrypoint-initdb.d/001-waitfans.sql:ro
+      - ../database/sharded-layout.sql:/docker-entrypoint-initdb.d/002-sharded-layout.sql:ro
+      - ../database/docker-grant-shards.sh:/docker-entrypoint-initdb.d/003-grant-shards.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s

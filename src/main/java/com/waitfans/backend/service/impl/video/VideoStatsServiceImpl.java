@@ -1,8 +1,8 @@
 package com.waitfans.backend.service.impl.video;
 
-import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.waitfans.backend.mapper.VideoStatsMapper;
 import com.waitfans.backend.pojo.VideoStats;
+import com.waitfans.backend.repository.PartitionedVideoStore;
 import com.waitfans.backend.service.video.VideoStatsService;
 import com.waitfans.backend.utils.RedisUtil;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +15,9 @@ import java.util.concurrent.*;
 public class VideoStatsServiceImpl implements VideoStatsService {
     @Autowired
     private VideoStatsMapper videoStatsMapper;
+
+    @Autowired
+    private PartitionedVideoStore partitionedVideoStore;
 
     @Autowired
     private RedisUtil redisUtil;
@@ -55,15 +58,7 @@ public class VideoStatsServiceImpl implements VideoStatsService {
      */
     @Override
     public void updateStats(Integer vid, String column, boolean increase, Integer count) {
-        UpdateWrapper<VideoStats> updateWrapper = new UpdateWrapper<>();
-        updateWrapper.eq("vid", vid);
-        if (increase) {
-            updateWrapper.setSql(column + " = " + column + " + " + count);
-        } else {
-            // 更新后的字段不能小于0
-            updateWrapper.setSql(column + " = CASE WHEN " + column + " - " + count + " < 0 THEN 0 ELSE " + column + " - " + count + " END");
-        }
-        videoStatsMapper.update(null, updateWrapper);
+        partitionedVideoStore.updateStats(vid, column, increase, count);
         redisUtil.delValue("videoStats:" + vid);
     }
 
@@ -74,16 +69,7 @@ public class VideoStatsServiceImpl implements VideoStatsService {
      */
     @Override
     public void updateGoodAndBad(Integer vid, boolean addGood) {
-        UpdateWrapper<VideoStats> updateWrapper = new UpdateWrapper<>();
-        updateWrapper.eq("vid", vid);
-        if (addGood) {
-            updateWrapper.setSql("good = good + 1");
-            updateWrapper.setSql("bad = CASE WHEN bad - 1 < 0 THEN 0 ELSE bad - 1 END");
-        } else {
-            updateWrapper.setSql("bad = bad + 1");
-            updateWrapper.setSql("good = CASE WHEN good - 1 < 0 THEN 0 ELSE good - 1 END");
-        }
-        videoStatsMapper.update(null, updateWrapper);
+        partitionedVideoStore.updateGoodAndBad(vid, addGood);
         redisUtil.delValue("videoStats:" + vid);
     }
 }

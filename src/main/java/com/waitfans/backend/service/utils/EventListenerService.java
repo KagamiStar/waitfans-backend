@@ -8,6 +8,8 @@ import com.waitfans.backend.pojo.Video;
 import com.waitfans.backend.utils.RedisUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -124,6 +126,11 @@ public class EventListenerService {
     /**
      * 每24小时同步一下各状态的视频集合
      */
+    @EventListener(ApplicationReadyEvent.class)
+    public void warmVideoStatusCache() {
+        updateVideoStatus();
+    }
+
     @Scheduled(fixedDelay = 1000 * 60 * 60 * 24)
     public void updateVideoStatus() {
         for (int i = 0; i < 3; i++) {
