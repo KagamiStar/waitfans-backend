@@ -2,7 +2,10 @@
 param()
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$workspaceRoot = Split-Path -Parent $projectRoot
 $envPath = Join-Path $projectRoot ".env.local"
 
 if (Test-Path -LiteralPath $envPath) {
@@ -18,6 +21,43 @@ if (Test-Path -LiteralPath $envPath) {
                 -Value $trimmed.Substring($separator + 1).Trim()
         }
     }
+}
+
+function Get-JavaMajorVersion {
+    param([string]$JavaExecutable)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $versionOutput = @(& $JavaExecutable -version 2>&1)
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $firstLine = [string]($versionOutput | Select-Object -First 1)
+    if ($firstLine -match '"1\.(\d+)\.') {
+        return [int]$matches[1]
+    }
+    if ($firstLine -match '"(\d+)(?:\.|")') {
+        return [int]$matches[1]
+    }
+    return $null
+}
+
+function Get-CommandMajorVersion {
+    param(
+        [System.Management.Automation.CommandInfo]$Command,
+        [string[]]$Arguments
+    )
+
+    if (-not $Command) {
+        return $null
+    }
+    $versionText = [string](& $Command.Source @Arguments)
+    if ($versionText.Trim() -match '^v?(\d+)') {
+        return [int]$matches[1]
+    }
+    return $null
 }
 
 function Test-TcpPort {
@@ -45,22 +85,36 @@ function Test-TcpPort {
 
 $javaCandidates = @(
     $env:WAITFANS_JAVA_HOME,
-    $env:JAVA_HOME,
-    "C:\Users\victory\.jdks\dragonwell-1.8.0_492"
+    $env:JAVA_HOME
 ) | Where-Object { $_ } | Select-Object -Unique
 
 $javaHome = $javaCandidates |
     Where-Object { Test-Path -LiteralPath (Join-Path $_ "bin\java.exe") } |
     Select-Object -First 1
+$javaExecutable = if ($javaHome) { Join-Path $javaHome "bin\java.exe" } else { $null }
+$javaMajor = if ($javaExecutable) { Get-JavaMajorVersion -JavaExecutable $javaExecutable } else { $null }
 
-$mavenCandidates = @(
-    $env:WAITFANS_MAVEN_HOME,
-    "C:\Users\victory\.m2\wrapper\dists\apache-maven-3.8.7-bin\1ktonn2lleg549uah6ngl1r74r\apache-maven-3.8.7"
-) | Where-Object { $_ } | Select-Object -Unique
+$mavenWrapper = Join-Path $projectRoot "mvnw.cmd"
+$configuredMaven = if ($env:WAITFANS_MAVEN_HOME) {
+    Join-Path $env:WAITFANS_MAVEN_HOME "bin\mvn.cmd"
+} else {
+    $null
+}
+$mavenAvailable = if ($configuredMaven) {
+    Test-Path -LiteralPath $configuredMaven
+} else {
+    Test-Path -LiteralPath $mavenWrapper
+}
+$mavenDetail = if ($configuredMaven) {
+    $configuredMaven
+} else {
+    "Maven Wrapper 3.8.7"
+}
 
-$mavenHome = $mavenCandidates |
-    Where-Object { Test-Path -LiteralPath (Join-Path $_ "bin\mvn.cmd") } |
-    Select-Object -First 1
+$nodeCommand = Get-Command "node.exe" -ErrorAction SilentlyContinue
+$npmCommand = Get-Command "npm.cmd" -ErrorAction SilentlyContinue
+$nodeMajor = Get-CommandMajorVersion -Command $nodeCommand -Arguments @("--version")
+$npmMajor = Get-CommandMajorVersion -Command $npmCommand -Arguments @("--version")
 
 $mysqlHost = "127.0.0.1"
 $mysqlPort = 3307
@@ -75,14 +129,35 @@ $esPort = if ($env:WAITFANS_ES_PORT) { [int]$env:WAITFANS_ES_PORT } else { 9200 
 
 $checks = @(
     [pscustomobject]@{
-        Item = "JDK"
-        Available = [bool]$javaHome
-        Detail = if ($javaHome) { $javaHome } else { "Set WAITFANS_JAVA_HOME" }
+        Item = "Local config"
+        Available = Test-Path -LiteralPath $envPath
+        Detail = if (Test-Path -LiteralPath $envPath) { $envPath } else { "Create .env.local from .env.example" }
+    },
+    [pscustomobject]@{
+        Item = "JDK 8"
+        Available = $javaMajor -eq 8
+        Detail = if ($javaHome) { "Java $javaMajor at $javaHome" } else { "Set WAITFANS_JAVA_HOME or JAVA_HOME" }
     },
     [pscustomobject]@{
         Item = "Maven"
-        Available = [bool]$mavenHome -or (Test-Path -LiteralPath (Join-Path $projectRoot "mvnw.cmd"))
-        Detail = if ($mavenHome) { $mavenHome } else { "Maven Wrapper (may download Maven on first use)" }
+        Available = $mavenAvailable
+        Detail = $mavenDetail
+    },
+    [pscustomobject]@{
+        Item = "Node.js 20+"
+        Available = $nodeMajor -ge 20
+        Detail = if ($nodeCommand) { "Node $nodeMajor at $($nodeCommand.Source)" } else { "Install Node.js 20 or newer" }
+    },
+    [pscustomobject]@{
+        Item = "npm 10+"
+        Available = $npmMajor -ge 10
+        Detail = if ($npmCommand) { "npm $npmMajor at $($npmCommand.Source)" } else { "Install npm 10 or newer" }
+    },
+    [pscustomobject]@{
+        Item = "Frontend repos"
+        Available = (Test-Path -LiteralPath (Join-Path $workspaceRoot "waitfans-client\package.json")) -and
+            (Test-Path -LiteralPath (Join-Path $workspaceRoot "waitfans-admin\package.json"))
+        Detail = $workspaceRoot
     },
     [pscustomobject]@{
         Item = "MySQL"

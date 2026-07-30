@@ -6,6 +6,7 @@ param(
     [switch]$Rebuild,
     [switch]$SkipMinio,
     [switch]$OpenBrowser,
+    [switch]$ValidateOnly,
     [switch]$Stop
 )
 
@@ -150,6 +151,27 @@ function Assert-Workspace {
     }
 }
 
+function Get-JavaMajorVersion {
+    param([string]$JavaExecutable)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $versionOutput = @(& $JavaExecutable -version 2>&1)
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $firstLine = [string]($versionOutput | Select-Object -First 1)
+    if ($firstLine -match '"1\.(\d+)\.') {
+        return [int]$matches[1]
+    }
+    if ($firstLine -match '"(\d+)(?:\.|")') {
+        return [int]$matches[1]
+    }
+    throw "Unable to determine the Java version from: $firstLine"
+}
+
 function Assert-Java {
     $javaHome = if ($env:WAITFANS_JAVA_HOME) {
         $env:WAITFANS_JAVA_HOME
@@ -164,9 +186,30 @@ function Assert-Java {
     if (-not (Test-Path -LiteralPath $java)) {
         throw "JDK executable not found: $java"
     }
+    $javaMajor = Get-JavaMajorVersion -JavaExecutable $java
+    if ($javaMajor -ne 8) {
+        throw "Waitfans backend requires JDK 8, but Java $javaMajor was found at $javaHome."
+    }
 
     $env:JAVA_HOME = $javaHome
     $env:Path = "$(Join-Path $javaHome 'bin');$env:Path"
+}
+
+function Assert-Node {
+    $node = Get-Command "node.exe" -ErrorAction SilentlyContinue
+    $npm = Get-Command "npm.cmd" -ErrorAction SilentlyContinue
+    if (-not $node -or -not $npm) {
+        throw "Node.js and npm were not found. Install Node.js 20 or newer with npm 10 or newer."
+    }
+
+    $nodeVersion = [string](& $node.Source --version)
+    $npmVersion = [string](& $npm.Source --version)
+    if ($nodeVersion.Trim() -notmatch '^v(\d+)' -or [int]$matches[1] -lt 20) {
+        throw "Waitfans frontends require Node.js 20 or newer; found $($nodeVersion.Trim())."
+    }
+    if ($npmVersion.Trim() -notmatch '^(\d+)' -or [int]$matches[1] -lt 10) {
+        throw "Waitfans frontends require npm 10 or newer; found $($npmVersion.Trim())."
+    }
 }
 
 function Resolve-RedisWslDistribution {
@@ -295,19 +338,19 @@ function Resolve-MinioRuntime {
 }
 
 function Ensure-MinioRuntime {
-    param([string]$Home)
+    param([string]$MinioRuntimePath)
 
-    $minio = Join-Path $Home "minio.exe"
-    $mc = Join-Path $Home "mc.exe"
+    $minio = Join-Path $MinioRuntimePath "minio.exe"
+    $mc = Join-Path $MinioRuntimePath "mc.exe"
     if ((Test-Path -LiteralPath $minio) -and (Test-Path -LiteralPath $mc)) {
         return
     }
     if (-not $Bootstrap) {
-        throw "MinIO or mc is missing under $Home. Run with -Bootstrap, specify -MinioHome, or use -SkipMinio."
+        throw "MinIO or mc is missing under $MinioRuntimePath. Run with -Bootstrap, specify -MinioHome, or use -SkipMinio."
     }
 
     Write-Stage "Downloading MinIO server and client"
-    New-Item -ItemType Directory -Force -Path $Home | Out-Null
+    New-Item -ItemType Directory -Force -Path $MinioRuntimePath | Out-Null
     if (-not (Test-Path -LiteralPath $minio)) {
         Invoke-WebRequest `
             -UseBasicParsing `
@@ -323,7 +366,7 @@ function Ensure-MinioRuntime {
 }
 
 function Start-Minio {
-    param([string]$Home)
+    param([string]$MinioRuntimePath)
 
     $endpointText = if ($env:WAITFANS_OSS_ENDPOINT) {
         $env:WAITFANS_OSS_ENDPOINT
@@ -339,9 +382,9 @@ function Start-Minio {
     $bucket = if ($env:WAITFANS_OSS_BUCKET) { $env:WAITFANS_OSS_BUCKET } else { "waitfans-local" }
     $accessKey = if ($env:WAITFANS_OSS_KEY_ID) { $env:WAITFANS_OSS_KEY_ID } else { "local-development" }
     $secretKey = if ($env:WAITFANS_OSS_KEY_SECRET) { $env:WAITFANS_OSS_KEY_SECRET } else { "local-development" }
-    $minio = Join-Path $Home "minio.exe"
-    $mc = Join-Path $Home "mc.exe"
-    $data = Join-Path $Home "data"
+    $minio = Join-Path $MinioRuntimePath "minio.exe"
+    $mc = Join-Path $MinioRuntimePath "mc.exe"
+    $data = Join-Path $MinioRuntimePath "data"
     $mcConfig = Join-Path $runtimeRoot "minio-mc"
     New-Item -ItemType Directory -Force -Path $data, $mcConfig, $logRoot, $stackRuntime | Out-Null
 
@@ -362,7 +405,7 @@ function Start-Minio {
                     "--console-address",
                     "127.0.0.1:9001"
                 ) `
-                -WorkingDirectory $Home `
+                -WorkingDirectory $MinioRuntimePath `
                 -WindowStyle Hidden `
                 -RedirectStandardOutput (Join-Path $logRoot "minio.stdout.log") `
                 -RedirectStandardError (Join-Path $logRoot "minio.stderr.log") `
@@ -568,6 +611,15 @@ function Stop-FullStack {
 
 New-Item -ItemType Directory -Force -Path $runtimeRoot, $stackRuntime, $logRoot | Out-Null
 Assert-Workspace
+
+if ($ValidateOnly) {
+    Import-LocalEnvironment
+    Assert-Java
+    Assert-Node
+    Write-Host "Waitfans toolchain configuration is valid." -ForegroundColor Green
+    exit 0
+}
+
 $RedisWslDistribution = Resolve-RedisWslDistribution
 Write-Output "Using WSL distribution: $RedisWslDistribution"
 
@@ -579,12 +631,13 @@ if ($Stop) {
 try {
     Write-Stage "Preparing local configuration"
     Ensure-LocalConfiguration
+    Assert-Node
     Assert-RedisWsl
     Ensure-ElasticsearchRuntime
 
     $resolvedMinioHome = Resolve-MinioRuntime
     if (-not $SkipMinio) {
-        Ensure-MinioRuntime -Home $resolvedMinioHome
+        Ensure-MinioRuntime -MinioRuntimePath $resolvedMinioHome
     }
 
     Write-Stage "Starting MySQL, Redis and Elasticsearch"
@@ -592,7 +645,7 @@ try {
         -RedisWslDistribution $RedisWslDistribution
 
     if (-not $SkipMinio) {
-        Start-Minio -Home $resolvedMinioHome
+        Start-Minio -MinioRuntimePath $resolvedMinioHome
     } else {
         Write-Warning "MinIO was skipped. Upload, avatar and cover storage features will be unavailable."
     }

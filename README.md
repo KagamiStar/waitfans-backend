@@ -35,6 +35,9 @@ java -version
 $env:JAVA_HOME
 Get-Service MySQL80
 wsl --list --verbose
+
+# 只校验项目配置的 JDK、Node.js、npm 与仓库布局，不启动任何服务
+.\scripts\start-full-stack.ps1 -ValidateOnly
 ```
 
 首次安装 Redis：
@@ -111,6 +114,10 @@ Test-NetConnection 127.0.0.1 -Port 7071
 - HTTP API：`127.0.0.1:7070`
 - IM WebSocket：`127.0.0.1:7071/im`
 - 阿里云 OSS / MinIO：上传功能需要有效的对象存储配置。**本地开发推荐 MinIO**（见 §3.3）
+
+仓库根目录的 `.java-version` 固定为 Java 8，Maven 版本由 Maven Wrapper 固定。
+如果系统默认 `java` 不是 8，请在 `.env.local` 中设置 `WAITFANS_JAVA_HOME`，
+所有仓库脚本都会优先使用该路径。
 
 RabbitMQ 依赖仍保留在项目中，但原业务监听已停用，本地开发无需启动 RabbitMQ。
 
@@ -313,9 +320,13 @@ WAITFANS_OSS_KEY_ID=local-development
 WAITFANS_OSS_KEY_SECRET=local-development
 ```
 
-`.env.local` 只用于本机，禁止提交。视频和图片上传测试前，必须把示例 OSS 占位值替换为有效、权限受限的测试桶配置。
+`.env.local` 只用于本机，禁止提交；无需重复写入所有默认值，只需覆盖本机路径、
+密钥或非默认端口。视频和图片上传测试前，必须把示例 OSS 占位值替换为有效、
+权限受限的测试桶配置。
 
-> **MinIO vs OSS**：`WAITFANS_STORAGE_PROVIDER=minio` 会启用 `MinioConfig`，使用 MinIO SDK 上传文件；设为 `oss` 或不设则使用阿里云 OSS SDK。本地开发建议使用 MinIO。
+> **MinIO vs OSS**：`WAITFANS_STORAGE_PROVIDER=minio` 会启用 `MinioConfig`，使用
+> MinIO SDK 上传文件；设为 `oss` 才会使用阿里云 OSS SDK。不设置时默认使用
+> MinIO。本地开发建议使用 MinIO。
 
 ## 6. 构建
 
