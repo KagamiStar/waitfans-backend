@@ -450,26 +450,4 @@ codegraph status .
 
 ## 11. 服务器部署
 
-Docker Compose 部署说明见 [deploy/README.md](deploy/README.md)。部署流程会构建后端镜像、准备 Elasticsearch 插件、初始化索引和数据库，并使用命名卷保存数据。## 12. 已知问题
-
-### 🔴 未解决
-
-| # | 问题 | 位置 | 说明 |
-|---|------|------|------|
-| 1 | `getOneVideo(Integer vid)` 收到非数字参数时抛出 500 | `VideoController.java:131` | 前端轮播图传 `vid=demo-3` 等字符串时抛 `NumberFormatException`，应改为返回 404 |
-| 2 | `cumulativeVideosForVisitor` 内部 `Integer.parseInt` 同理 | `VideoController.java:88` | 同上 |
-
-### 🟡 占位代码
-
-| # | 位置 | 说明 |
-|---|------|------|
-| 1 | `UserVideoController` 等多个 Controller | 部分接口的返回值未与前端完全对齐 |
-| 2 | `application.yml` 中 OSS 默认值指向 `127.0.0.1:9000` | 本地开发可用 MinIO 替代 |
-
-### 🟢 优化项
-
-| # | 项目 | 说明 |
-|---|------|------|
-| 1 | ES 可选化 | ES 不可用时搜索接口返回空结果而非报错 |
-| 2 | 异常处理 | `catch` 块中有 `e.printStackTrace()` 应改为 log 输出 |
-| 3 | 视频合并 | `mergeChunks` 中 OSS 分片上传代码被注释，异步流程依赖 `CompletableFuture`，无失败重试机制 |
+Docker Compose 部署说明见 [deploy/README.md](deploy/README.md)。部署流程会构建后端镜像、准备 Elasticsearch 插件、初始化索引和数据库，并使用命名卷保存数据。
