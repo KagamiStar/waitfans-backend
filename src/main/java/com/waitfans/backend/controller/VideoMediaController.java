@@ -2,6 +2,10 @@ package com.waitfans.backend.controller;
 
 import com.waitfans.backend.mapper.VideoMapper;
 import com.waitfans.backend.pojo.Video;
+import com.waitfans.backend.pojo.CustomResponse;
+import com.waitfans.backend.pojo.dto.MediaPreviewTicket;
+import com.waitfans.backend.service.media.MediaPreviewTokenService;
+import com.waitfans.backend.service.utils.CurrentUser;
 import com.waitfans.backend.utils.HttpByteRange;
 import com.waitfans.backend.utils.OssUtil;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,23 +17,40 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.concurrent.TimeUnit;
+import java.util.Objects;
 
 @RestController
 public class VideoMediaController {
     private static final int COPY_BUFFER_SIZE = 64 * 1024;
 
-    @Autowired
     private VideoMapper videoMapper;
 
-    @Autowired
     private OssUtil ossUtil;
+
+    private CurrentUser currentUser;
+
+    private MediaPreviewTokenService previewTokenService;
+
+    @Autowired
+    public VideoMediaController(
+            VideoMapper videoMapper,
+            OssUtil ossUtil,
+            CurrentUser currentUser,
+            MediaPreviewTokenService previewTokenService
+    ) {
+        this.videoMapper = videoMapper;
+        this.ossUtil = ossUtil;
+        this.currentUser = currentUser;
+        this.previewTokenService = previewTokenService;
+    }
 
     @GetMapping("/media/video/{vid}")
     public ResponseEntity<StreamingResponseBody> stream(
@@ -37,10 +58,56 @@ public class VideoMediaController {
             @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader
     ) {
         Video video = videoMapper.selectById(vid);
-        if (video == null || video.getStatus() == 3) {
+        if (!isPublic(video)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Video not found");
         }
+        return stream(video, rangeHeader, CacheControl.noStore());
+    }
 
+    @PostMapping("/media/video/{vid}/preview-token")
+    public CustomResponse createPreviewTicket(@PathVariable("vid") Integer vid) {
+        Video video = videoMapper.selectById(vid);
+        if (!isPreviewTicketAvailable(video)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Video not found");
+        }
+        CustomResponse response = new CustomResponse();
+        if (isPublic(video)) {
+            response.setData(new MediaPreviewTicket("/media/video/" + vid, 0));
+            return response;
+        }
+        Integer userId = currentUser.getUserId();
+        if (!Objects.equals(userId, video.getUid()) && !Boolean.TRUE.equals(currentUser.isAdmin())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Video not found");
+        }
+        String token = previewTokenService.issue(vid);
+        response.setData(new MediaPreviewTicket(
+                "/media/preview/" + vid + "?token=" + token,
+                MediaPreviewTokenService.TTL_SECONDS
+        ));
+        return response;
+    }
+
+    @GetMapping("/media/preview/{vid}")
+    public ResponseEntity<StreamingResponseBody> preview(
+            @PathVariable("vid") Integer vid,
+            @RequestParam("token") String token,
+            @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader
+    ) {
+        if (!previewTokenService.matches(vid, token)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Video not found");
+        }
+        Video video = videoMapper.selectById(vid);
+        if (!isPreviewable(video)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Video not found");
+        }
+        return stream(video, rangeHeader, CacheControl.noStore());
+    }
+
+    private ResponseEntity<StreamingResponseBody> stream(
+            Video video,
+            String rangeHeader,
+            CacheControl cacheControl
+    ) {
         OssUtil.StoredObjectMetadata metadata;
         HttpByteRange range;
         try {
@@ -75,7 +142,7 @@ public class VideoMediaController {
         headers.set(HttpHeaders.ACCEPT_RANGES, "bytes");
         headers.setContentLength(range.getLength());
         headers.setContentType(mediaType(metadata.getContentType()));
-        headers.setCacheControl(CacheControl.maxAge(1, TimeUnit.HOURS).cachePublic());
+        headers.setCacheControl(cacheControl);
         headers.set(HttpHeaders.CONTENT_DISPOSITION, "inline");
         if (range.isPartial()) {
             headers.set(
@@ -88,6 +155,18 @@ public class VideoMediaController {
                 headers,
                 range.isPartial() ? HttpStatus.PARTIAL_CONTENT : HttpStatus.OK
         );
+    }
+
+    private static boolean isPublic(Video video) {
+        return video != null && Integer.valueOf(1).equals(video.getStatus());
+    }
+
+    private static boolean isPreviewable(Video video) {
+        return video != null && (Integer.valueOf(0).equals(video.getStatus()) || Integer.valueOf(2).equals(video.getStatus()));
+    }
+
+    private static boolean isPreviewTicketAvailable(Video video) {
+        return isPublic(video) || isPreviewable(video);
     }
 
     private static MediaType mediaType(String contentType) {
