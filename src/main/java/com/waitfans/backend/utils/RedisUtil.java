@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.DefaultTypedTuple;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
 import java.time.DayOfWeek;
@@ -74,6 +75,17 @@ public class RedisUtil {
     public boolean setIfAbsent(String key, Object value, long time) {
         Boolean stored = redisTemplate.opsForValue().setIfAbsent(key, value, time, TimeUnit.SECONDS);
         return Boolean.TRUE.equals(stored);
+    }
+
+    /** Atomically increments a counter and sets its first-window expiry. */
+    public long incrementAndExpire(String key, long seconds) {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>(
+                "local count = redis.call('INCR', KEYS[1]); "
+                        + "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]); end; return count;",
+                Long.class);
+        Long count = (Long) redisTemplate.execute(script, Collections.singletonList(key), String.valueOf(seconds));
+        if (count == null) throw new IllegalStateException("Redis counter returned null");
+        return count;
     }
 
     /**

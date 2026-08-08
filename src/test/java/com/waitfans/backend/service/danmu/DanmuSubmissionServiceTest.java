@@ -24,6 +24,7 @@ class DanmuSubmissionServiceTest {
         PartitionedVideoStore store = mock(PartitionedVideoStore.class);
         Video video = new Video();
         video.setStatus(1);
+        video.setDuration(30D);
         when(videos.selectById(10)).thenReturn(video);
         when(danmus.insert(any(Danmu.class))).thenAnswer(call -> {
             call.getArgument(0, Danmu.class).setId(88);
@@ -51,6 +52,49 @@ class DanmuSubmissionServiceTest {
                 () -> service.submit(7, 10, payload()));
 
         assertEquals(DanmuProtocolErrorCode.VIDEO_NOT_PUBLIC, error.getErrorCode());
+    }
+
+    @Test
+    void normalizesValidPayloadAndRejectsForbiddenUnicode() {
+        VideoMapper videos = mock(VideoMapper.class);
+        DanmuMapper danmus = mock(DanmuMapper.class);
+        PartitionedVideoStore store = mock(PartitionedVideoStore.class);
+        Video video = new Video();
+        video.setStatus(1);
+        video.setDuration(5D);
+        when(videos.selectById(10)).thenReturn(video);
+        when(danmus.insert(any(Danmu.class))).thenAnswer(call -> {
+            call.getArgument(0, Danmu.class).setId(89);
+            return 1;
+        });
+        DanmuSubmissionService service = new DanmuSubmissionService(danmus, videos, store);
+        JSONObject valid = payload();
+        valid.put("content", " e\u0301 ");
+        valid.put("color", "#aBc123");
+        valid.put("timePoint", 1.23456D);
+
+        Danmu normalized = service.submit(7, 10, valid);
+
+        assertEquals("é", normalized.getContent());
+        assertEquals("#ABC123", normalized.getColor());
+        assertEquals(1.235D, normalized.getTimePoint());
+        valid.put("content", "bad\u200Btext");
+        DanmuSubmitException error = assertThrows(DanmuSubmitException.class, () -> service.submit(7, 10, valid));
+        assertEquals(DanmuProtocolErrorCode.CONTENT_INVALID, error.getErrorCode());
+    }
+
+    @Test
+    void requiresUsableDurationMetadata() {
+        VideoMapper videos = mock(VideoMapper.class);
+        Video video = new Video();
+        video.setStatus(1);
+        when(videos.selectById(10)).thenReturn(video);
+        DanmuSubmissionService service = new DanmuSubmissionService(mock(DanmuMapper.class), videos,
+                mock(PartitionedVideoStore.class));
+
+        DanmuSubmitException error = assertThrows(DanmuSubmitException.class, () -> service.submit(7, 10, payload()));
+
+        assertEquals(DanmuProtocolErrorCode.VIDEO_METADATA_INVALID, error.getErrorCode());
     }
 
     private JSONObject payload() {
