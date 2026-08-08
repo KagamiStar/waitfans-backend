@@ -23,6 +23,7 @@ import java.util.Base64;
 public class VideoPlayTrackingService {
     public static final String VISITOR_COOKIE_NAME = "wf_visitor";
     public static final long DEDUP_SECONDS = 30 * 60;
+    public static final long VISITOR_SESSION_SECONDS = 180L * 24 * 60 * 60;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final VideoMapper videoMapper;
@@ -49,18 +50,18 @@ public class VideoPlayTrackingService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Video not found");
         }
 
-        String visitorToken = null;
         String cookieToSet = null;
         String dedupKey;
         if (uid != null) {
             dedupKey = userDedupKey(uid, vid);
         } else {
-            visitorToken = normalizeVisitorToken(existingVisitorToken);
-            if (visitorToken == null) {
-                visitorToken = newVisitorToken();
-                cookieToSet = visitorToken;
+            VisitorSession visitorSession = resolveVisitorSession(existingVisitorToken);
+            if (visitorSession == null) {
+                log.error("Video play visitor session unavailable for vid={}", vid);
+                return unavailable(null, vid, null);
             }
-            dedupKey = visitorDedupKey(visitorDigest(visitorToken), vid);
+            cookieToSet = visitorSession.cookieToSet;
+            dedupKey = visitorDedupKey(visitorSession.digest, vid);
         }
 
         final boolean claimed;
@@ -135,6 +136,10 @@ public class VideoPlayTrackingService {
         return "play:dedup:visitor:" + digest + ":video:" + vid;
     }
 
+    static String visitorSessionKey(String digest) {
+        return "play:visitor:session:" + digest;
+    }
+
     static String visitorDigest(String token) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
@@ -156,5 +161,36 @@ public class VideoPlayTrackingService {
 
     private static String normalizeVisitorToken(String token) {
         return token != null && token.matches("[A-Za-z0-9_-]{43}") ? token : null;
+    }
+
+    private VisitorSession resolveVisitorSession(String existingVisitorToken) {
+        String token = normalizeVisitorToken(existingVisitorToken);
+        try {
+            if (token != null) {
+                String digest = visitorDigest(token);
+                if (redisUtil.isExist(visitorSessionKey(digest))) {
+                    return new VisitorSession(digest, null);
+                }
+            }
+            String newToken = newVisitorToken();
+            String digest = visitorDigest(newToken);
+            if (!redisUtil.setIfAbsent(visitorSessionKey(digest), "1", VISITOR_SESSION_SECONDS)) {
+                return null;
+            }
+            return new VisitorSession(digest, newToken);
+        } catch (RuntimeException exception) {
+            log.error("Could not create visitor session", exception);
+            return null;
+        }
+    }
+
+    private static class VisitorSession {
+        private final String digest;
+        private final String cookieToSet;
+
+        private VisitorSession(String digest, String cookieToSet) {
+            this.digest = digest;
+            this.cookieToSet = cookieToSet;
+        }
     }
 }

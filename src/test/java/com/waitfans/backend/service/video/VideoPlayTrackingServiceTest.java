@@ -46,6 +46,7 @@ class VideoPlayTrackingServiceTest {
 
         assertEquals(404, error.getStatus().value());
         verify(fixture.redisUtil, never()).setIfAbsent(anyString(), any(), anyLong());
+        verify(fixture.redisUtil, never()).isExist(anyString());
     }
 
     @Test
@@ -58,6 +59,7 @@ class VideoPlayTrackingServiceTest {
                 () -> fixture.service.record(10, null, null));
         assertEquals(404, missing.getStatus().value());
         verify(fixture.redisUtil, never()).setIfAbsent(anyString(), any(), anyLong());
+        verify(fixture.redisUtil, never()).isExist(anyString());
     }
 
     @Test
@@ -88,6 +90,10 @@ class VideoPlayTrackingServiceTest {
         assertTrue(token.matches("[A-Za-z0-9_-]{43}"));
         assertNotEquals(token, VideoPlayTrackingService.visitorDigest(token));
         verify(fixture.redisUtil).setIfAbsent(
+                VideoPlayTrackingService.visitorSessionKey(VideoPlayTrackingService.visitorDigest(token)),
+                "1", VideoPlayTrackingService.VISITOR_SESSION_SECONDS
+        );
+        verify(fixture.redisUtil).setIfAbsent(
                 "play:dedup:visitor:" + VideoPlayTrackingService.visitorDigest(token) + ":video:10",
                 "1", 1800
         );
@@ -98,15 +104,66 @@ class VideoPlayTrackingServiceTest {
     void guestReusesValidCookieWithoutIssuingAnother() {
         Fixture fixture = publishedFixture();
         String existing = VideoPlayTrackingService.newVisitorToken();
+        String digest = VideoPlayTrackingService.visitorDigest(existing);
+        when(fixture.redisUtil.isExist(VideoPlayTrackingService.visitorSessionKey(digest))).thenReturn(true);
         when(fixture.redisUtil.setIfAbsent(anyString(), any(), anyLong())).thenReturn(true);
 
         VideoPlayOutcome outcome = fixture.service.record(10, null, existing);
 
         assertNull(outcome.getVisitorCookieValue());
         verify(fixture.redisUtil).setIfAbsent(
-                VideoPlayTrackingService.visitorDedupKey(VideoPlayTrackingService.visitorDigest(existing), 10),
+                VideoPlayTrackingService.visitorDedupKey(digest, 10),
                 "1", 1800
         );
+        verify(fixture.redisUtil, never()).setIfAbsent(
+                VideoPlayTrackingService.visitorSessionKey(digest), "1", VideoPlayTrackingService.VISITOR_SESSION_SECONDS
+        );
+    }
+
+    @Test
+    void unregisteredFormatValidCookieIsReplacedByServerSession() {
+        Fixture fixture = publishedFixture();
+        String forged = VideoPlayTrackingService.newVisitorToken();
+        String forgedDigest = VideoPlayTrackingService.visitorDigest(forged);
+        when(fixture.redisUtil.isExist(VideoPlayTrackingService.visitorSessionKey(forgedDigest))).thenReturn(false);
+        when(fixture.redisUtil.setIfAbsent(anyString(), any(), anyLong())).thenReturn(true);
+
+        VideoPlayOutcome outcome = fixture.service.record(10, null, forged);
+
+        String replacement = outcome.getVisitorCookieValue();
+        assertNotNull(replacement);
+        assertNotEquals(forged, replacement);
+        verify(fixture.redisUtil).setIfAbsent(
+                VideoPlayTrackingService.visitorSessionKey(VideoPlayTrackingService.visitorDigest(replacement)),
+                "1", VideoPlayTrackingService.VISITOR_SESSION_SECONDS
+        );
+    }
+
+    @Test
+    void visitorSessionFailureDoesNotSetCookieOrCount() {
+        Fixture fixture = publishedFixture();
+        String existing = VideoPlayTrackingService.newVisitorToken();
+        when(fixture.redisUtil.isExist(anyString())).thenThrow(new IllegalStateException("redis down"));
+
+        VideoPlayOutcome outcome = fixture.service.record(10, null, existing);
+
+        assertEquals(VideoPlayResult.Reason.TRACKING_UNAVAILABLE, outcome.getResult().getReason());
+        assertNull(outcome.getVisitorCookieValue());
+        verify(fixture.persistence, never()).count(any(), any());
+        verify(fixture.redisUtil, never()).setIfAbsent(anyString(), any(), anyLong());
+    }
+
+    @Test
+    void visitorSessionRegistrationFailureDoesNotSetCookieOrCount() {
+        Fixture fixture = publishedFixture();
+        when(fixture.redisUtil.setIfAbsent(anyString(), any(), anyLong()))
+                .thenThrow(new IllegalStateException("redis down"));
+
+        VideoPlayOutcome outcome = fixture.service.record(10, null, null);
+
+        assertEquals(VideoPlayResult.Reason.TRACKING_UNAVAILABLE, outcome.getResult().getReason());
+        assertNull(outcome.getVisitorCookieValue());
+        verify(fixture.persistence, never()).count(any(), any());
     }
 
     @Test
