@@ -10,7 +10,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
-/** Serializes BasicRemote sends for one websocket session. */
+/** Serializes BasicRemote sends for one websocket session; the five-second watchdog closes the session but cannot interrupt a blocked container write. */
 @Slf4j
 final class DanmuSessionSender {
     private final Session session;
@@ -30,7 +30,7 @@ final class DanmuSessionSender {
     }
 
     synchronized boolean enqueue(String message, boolean closeAfter) {
-        if (closed || !queue.offer(message)) return false;
+        if (closed || closeAfterDrain || !queue.offer(message)) return false;
         if (closeAfter) closeAfterDrain = true;
         if (!draining) {
             draining = true;

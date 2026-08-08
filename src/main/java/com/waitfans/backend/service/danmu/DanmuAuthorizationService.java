@@ -34,6 +34,7 @@ public class DanmuAuthorizationService {
         Integer uid;
         try {
             uid = Integer.valueOf(subject);
+            if (uid <= 0) throw new NumberFormatException();
         } catch (RuntimeException exception) {
             throw new DanmuSubmitException(DanmuProtocolErrorCode.AUTH_EXPIRED);
         }

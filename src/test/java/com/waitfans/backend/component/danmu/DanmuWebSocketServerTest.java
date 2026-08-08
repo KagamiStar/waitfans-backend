@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -49,19 +50,21 @@ class DanmuWebSocketServerTest {
     @Test
     void v1MalformedFrameGetsAProtocolErrorEnvelope() throws Exception {
         DanmuWebSocketServer server = new DanmuWebSocketServer();
-        configure(server);
+        DanmuRateLimiter limiter = configure(server);
         Session session = session(true, "malformed");
         RemoteEndpoint.Basic remote = session.getBasicRemote();
         server.onOpen(session, "10");
 
         server.onMessage(session, "{", "10");
+        server.onMessage(session, "{", "10");
 
         org.mockito.ArgumentCaptor<String> message = org.mockito.ArgumentCaptor.forClass(String.class);
-        verify(remote, timeout(1000).atLeast(2)).sendText(message.capture());
+        verify(remote, timeout(1000).atLeast(3)).sendText(message.capture());
         JSONObject frame = JSON.parseObject(message.getAllValues().get(message.getAllValues().size() - 1));
         assertEquals(1, frame.getInteger("version"));
         assertEquals("error", frame.getString("type"));
         assertEquals("MALFORMED_FRAME", frame.getString("errorCode"));
+        verify(limiter, times(2)).requireAllowed("danmu:rate:frame:malformed", 20, 10);
         server.onClose(session, "10");
     }
 
@@ -80,6 +83,23 @@ class DanmuWebSocketServerTest {
         verify(session).close();
     }
 
+    @Test
+    void v1RejectsBodyVideoThatDoesNotMatchTheCanonicalRoom() throws Exception {
+        DanmuWebSocketServer server = new DanmuWebSocketServer();
+        configure(server);
+        Session session = session(true, "body-vid");
+        RemoteEndpoint.Basic remote = session.getBasicRemote();
+        server.onOpen(session, "10");
+
+        server.onMessage(session, "{\"version\":1,\"type\":\"danmu\",\"requestId\":\"x\",\"vid\":11}", "999");
+
+        org.mockito.ArgumentCaptor<String> message = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(remote, timeout(1000).atLeast(2)).sendText(message.capture());
+        JSONObject frame = JSON.parseObject(message.getAllValues().get(message.getAllValues().size() - 1));
+        assertEquals("INVALID_VIDEO_ID", frame.getString("errorCode"));
+        server.onClose(session, "10");
+    }
+
     @SuppressWarnings("unchecked")
     private Session session(boolean v1, String id) throws Exception {
         Session session = mock(Session.class);
@@ -92,12 +112,14 @@ class DanmuWebSocketServerTest {
         return session;
     }
 
-    private void configure(DanmuWebSocketServer server) {
+    private DanmuRateLimiter configure(DanmuWebSocketServer server) {
         DanmuSubmissionService submissions = mock(DanmuSubmissionService.class);
         Video video = new Video();
         video.setStatus(1);
         video.setDuration(60D);
         when(submissions.requirePublicVideo(10)).thenReturn(video);
-        server.setDependencies(mock(RedisUtil.class), submissions, mock(DanmuAuthorizationService.class), mock(DanmuRateLimiter.class));
+        DanmuRateLimiter limiter = mock(DanmuRateLimiter.class);
+        server.setDependencies(mock(RedisUtil.class), submissions, mock(DanmuAuthorizationService.class), limiter);
+        return limiter;
     }
 }

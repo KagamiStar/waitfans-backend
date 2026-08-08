@@ -35,6 +35,11 @@ class DanmuSessionSenderTest {
             for (int index = 0; index < 100; index++) assertTrue(bounded.enqueue("queued-" + index, false));
             assertFalse(bounded.enqueue("overflow", false));
             bounded.stop();
+
+            DanmuSessionSender closing = new DanmuSessionSender(session, command -> { }, scheduler, () -> { });
+            assertTrue(closing.enqueue("final-error", true));
+            assertFalse(closing.enqueue("must-not-follow", false));
+            closing.stop();
         } finally {
             scheduler.shutdownNow();
         }

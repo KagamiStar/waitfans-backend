@@ -78,6 +78,13 @@ class DanmuSubmissionServiceTest {
         assertEquals("é", normalized.getContent());
         assertEquals("#ABC123", normalized.getColor());
         assertEquals(1.235D, normalized.getTimePoint());
+        valid.put("content", "\u00A0\u3000👩‍💻\u3000\u00A0");
+        assertEquals("👩‍💻", service.submit(7, 10, valid).getContent());
+        valid.put("content", codePoints(80));
+        service.submit(7, 10, valid);
+        valid.put("content", codePoints(81));
+        DanmuSubmitException tooLong = assertThrows(DanmuSubmitException.class, () -> service.submit(7, 10, valid));
+        assertEquals(DanmuProtocolErrorCode.CONTENT_INVALID, tooLong.getErrorCode());
         valid.put("content", "bad\u200Btext");
         DanmuSubmitException error = assertThrows(DanmuSubmitException.class, () -> service.submit(7, 10, valid));
         assertEquals(DanmuProtocolErrorCode.CONTENT_INVALID, error.getErrorCode());
@@ -95,6 +102,30 @@ class DanmuSubmissionServiceTest {
         DanmuSubmitException error = assertThrows(DanmuSubmitException.class, () -> service.submit(7, 10, payload()));
 
         assertEquals(DanmuProtocolErrorCode.VIDEO_METADATA_INVALID, error.getErrorCode());
+    }
+
+    @Test
+    void rejectsZeroDurationAndPreRoundTimeOverflow() {
+        VideoMapper videos = mock(VideoMapper.class);
+        Video video = new Video();
+        video.setStatus(1);
+        video.setDuration(0D);
+        when(videos.selectById(10)).thenReturn(video);
+        DanmuSubmissionService service = new DanmuSubmissionService(mock(DanmuMapper.class), videos,
+                mock(PartitionedVideoStore.class));
+        assertEquals(DanmuProtocolErrorCode.VIDEO_METADATA_INVALID,
+                assertThrows(DanmuSubmitException.class, () -> service.submit(7, 10, payload())).getErrorCode());
+        video.setDuration(5D);
+        JSONObject overflow = payload();
+        overflow.put("timePoint", 6.0004D);
+        assertEquals(DanmuProtocolErrorCode.TIME_POINT_INVALID,
+                assertThrows(DanmuSubmitException.class, () -> service.submit(7, 10, overflow)).getErrorCode());
+    }
+
+    private String codePoints(int count) {
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < count; index++) builder.append("😀");
+        return builder.toString();
     }
 
     private JSONObject payload() {

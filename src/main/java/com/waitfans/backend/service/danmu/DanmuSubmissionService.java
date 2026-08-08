@@ -10,7 +10,6 @@ import com.waitfans.backend.repository.PartitionedVideoStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 import java.text.Normalizer;
 import java.util.Date;
@@ -61,15 +60,17 @@ public class DanmuSubmissionService {
     }
 
     private ValidatedDanmu validate(JSONObject data, Video video) {
-        if (data == null || !StringUtils.hasText(data.getString("content"))) {
+        if (data == null || data.getString("content") == null) {
             throw new DanmuSubmitException(DanmuProtocolErrorCode.CONTENT_INVALID);
         }
         String normalized = Normalizer.normalize(data.getString("content"), Normalizer.Form.NFC);
-        if (normalized.codePointCount(0, normalized.length()) > 80 || hasForbiddenCodePoint(normalized)) {
+        if (hasForbiddenCodePoint(normalized)) {
             throw new DanmuSubmitException(DanmuProtocolErrorCode.CONTENT_INVALID);
         }
-        String content = normalized.trim();
-        if (content.isEmpty()) throw new DanmuSubmitException(DanmuProtocolErrorCode.CONTENT_INVALID);
+        String content = trimUnicodeWhitespace(normalized);
+        if (content.isEmpty() || content.codePointCount(0, content.length()) > 80 || hasForbiddenCodePoint(content)) {
+            throw new DanmuSubmitException(DanmuProtocolErrorCode.CONTENT_INVALID);
+        }
         Integer fontsize = data.getInteger("fontsize");
         Integer mode = data.getInteger("mode");
         String color = data.getString("color");
@@ -79,15 +80,15 @@ public class DanmuSubmissionService {
             throw new DanmuSubmitException(DanmuProtocolErrorCode.STYLE_INVALID);
         }
         Double duration = video.getDuration();
-        if (duration == null || duration.isNaN() || duration.isInfinite() || duration < 0) {
+        if (duration == null || duration.isNaN() || duration.isInfinite() || duration <= 0) {
             throw new DanmuSubmitException(DanmuProtocolErrorCode.VIDEO_METADATA_INVALID);
         }
         Double timePoint = data.getDouble("timePoint");
         if (timePoint == null || timePoint.isNaN() || timePoint.isInfinite() || timePoint < 0) {
             throw new DanmuSubmitException(DanmuProtocolErrorCode.TIME_POINT_INVALID);
         }
+        if (timePoint > duration + 1D) throw new DanmuSubmitException(DanmuProtocolErrorCode.TIME_POINT_INVALID);
         double rounded = Math.round(timePoint * 1000D) / 1000D;
-        if (rounded > duration + 1D) throw new DanmuSubmitException(DanmuProtocolErrorCode.TIME_POINT_INVALID);
         return new ValidatedDanmu(content, fontsize, mode, color.toUpperCase(Locale.ROOT), rounded);
     }
 
@@ -100,6 +101,22 @@ public class DanmuSubmissionService {
             index += Character.charCount(codePoint);
         }
         return false;
+    }
+
+    private String trimUnicodeWhitespace(String value) {
+        int start = 0;
+        int end = value.length();
+        while (start < end) {
+            int codePoint = value.codePointAt(start);
+            if (!Character.isWhitespace(codePoint) && !Character.isSpaceChar(codePoint)) break;
+            start += Character.charCount(codePoint);
+        }
+        while (end > start) {
+            int codePoint = value.codePointBefore(end);
+            if (!Character.isWhitespace(codePoint) && !Character.isSpaceChar(codePoint)) break;
+            end -= Character.charCount(codePoint);
+        }
+        return value.substring(start, end);
     }
 
     private static class ValidatedDanmu {

@@ -97,10 +97,12 @@ public class DanmuWebSocketServer {
             close(session);
             return;
         }
-        Connection connection = new Connection(session, vid, v1);
+        String roomKey = String.valueOf(videoId);
+        Connection connection = new Connection(session, videoId, roomKey, v1);
         if (connections.putIfAbsent(session, connection) != null) return;
-        rooms.computeIfAbsent(vid, key -> new ConcurrentHashMap<>()).put(session, connection);
-        broadcastPresence(vid);
+        // Empty rooms intentionally stay resident: removing them races concurrent final-close and new-open.
+        rooms.computeIfAbsent(roomKey, key -> new ConcurrentHashMap<>()).put(session, connection);
+        broadcastPresence(roomKey);
     }
 
     @OnMessage
@@ -112,8 +114,15 @@ public class DanmuWebSocketServer {
             else disconnect(connection, true);
             return;
         }
-        if (connection.v1) handleV1(connection, message, vid);
-        else handleLegacy(connection, message, vid);
+        try {
+            rateLimiter.requireAllowed("danmu:rate:frame:" + connection.session.getId(), 20, 10);
+        } catch (DanmuSubmitException exception) {
+            if (connection.v1) sendV1(connection, DanmuProtocol.error(null, exception.getErrorCode()), false);
+            else sendLegacyError(connection, exception.getErrorCode());
+            return;
+        }
+        if (connection.v1) handleV1(connection, message);
+        else handleLegacy(connection, message);
     }
 
     @OnClose
@@ -127,7 +136,7 @@ public class DanmuWebSocketServer {
         disconnect(connections.get(session), true);
     }
 
-    private static void handleV1(Connection connection, String message, String vid) {
+    private static void handleV1(Connection connection, String message) {
         JSONObject frame;
         try {
             frame = JSON.parseObject(message);
@@ -156,49 +165,47 @@ public class DanmuWebSocketServer {
         connection.lastSeen = System.currentTimeMillis();
         try {
             if ("heartbeat".equals(type)) {
-                rateLimiter.requireAllowed("danmu:rate:frame:" + connection.session.getId(), 20, 10);
                 rateLimiter.requireAllowed("danmu:rate:heartbeat:" + connection.session.getId(), 6, 60);
                 sendV1(connection, DanmuProtocol.frame("heartbeat", requestId, null, null), false);
                 return;
             }
-            Integer videoId = parseVid(vid);
+            ensureBodyVid(frame, connection.videoId);
             User user = authorizationService.requireNormalUser(frame.getString("token"));
-            submissionService.validateForSubmission(videoId, frame.getJSONObject("data"));
-            applyDanmuLimits(connection, user.getUid(), videoId);
-            Danmu danmu = submissionService.submit(user.getUid(), videoId, frame.getJSONObject("data"));
+            submissionService.validateForSubmission(connection.videoId, frame.getJSONObject("data"));
+            applyDanmuLimits(connection, user.getUid(), connection.videoId);
+            Danmu danmu = submissionService.submit(user.getUid(), connection.videoId, frame.getJSONObject("data"));
             refreshCaches(danmu);
             if (sendV1(connection, DanmuProtocol.frame("ack", requestId, null, danmu), false)) {
-                broadcastDanmu(vid, danmu);
+                broadcastDanmu(connection.roomKey, danmu);
             }
         } catch (DanmuSubmitException exception) {
             sendV1(connection, DanmuProtocol.error(requestId, exception.getErrorCode()), false);
         } catch (RuntimeException exception) {
-            log.error("Danmu submit failed for vid={}", vid, exception);
+            log.error("Danmu submit failed for vid={}", connection.videoId, exception);
             sendV1(connection, DanmuProtocol.error(requestId, DanmuProtocolErrorCode.SEND_FAILED), false);
         }
     }
 
-    private static void handleLegacy(Connection connection, String message, String vid) {
+    private static void handleLegacy(Connection connection, String message) {
         try {
             JSONObject frame = JSON.parseObject(message);
             if (frame == null) return;
             connection.lastSeen = System.currentTimeMillis();
-            Integer videoId = parseVid(vid);
+            ensureBodyVid(frame, connection.videoId);
             User user = authorizationService.requireNormalUser(frame.getString("token"));
-            submissionService.validateForSubmission(videoId, frame.getJSONObject("data"));
-            applyDanmuLimits(connection, user.getUid(), videoId);
-            Danmu danmu = submissionService.submit(user.getUid(), videoId, frame.getJSONObject("data"));
+            submissionService.validateForSubmission(connection.videoId, frame.getJSONObject("data"));
+            applyDanmuLimits(connection, user.getUid(), connection.videoId);
+            Danmu danmu = submissionService.submit(user.getUid(), connection.videoId, frame.getJSONObject("data"));
             refreshCaches(danmu);
-            broadcastDanmu(vid, danmu);
+            broadcastDanmu(connection.roomKey, danmu);
         } catch (DanmuSubmitException exception) {
             sendLegacyError(connection, exception.getErrorCode());
         } catch (RuntimeException exception) {
-            log.warn("Legacy danmu submit failed for vid={}", vid, exception);
+            log.warn("Legacy danmu submit failed for vid={}", connection.videoId, exception);
         }
     }
 
     private static void applyDanmuLimits(Connection connection, Integer uid, Integer vid) {
-        rateLimiter.requireAllowed("danmu:rate:frame:" + connection.session.getId(), 20, 10);
         rateLimiter.requireAllowed("danmu:rate:session:" + connection.session.getId(), 1, 1);
         rateLimiter.requireAllowed("danmu:rate:user:short:" + uid, 5, 10);
         rateLimiter.requireAllowed("danmu:rate:user:long:" + uid, 30, 60);
@@ -268,10 +275,9 @@ public class DanmuWebSocketServer {
         if (connection == null || !connection.removed.compareAndSet(false, true)) return;
         connections.remove(connection.session, connection);
         connection.sender.stop();
-        ConcurrentMap<Session, Connection> room = rooms.get(connection.vid);
+        ConcurrentMap<Session, Connection> room = rooms.get(connection.roomKey);
         if (room != null && room.remove(connection.session, connection)) {
-            if (room.isEmpty()) rooms.remove(connection.vid, room);
-            else broadcastPresence(connection.vid);
+            if (!room.isEmpty()) broadcastPresence(connection.roomKey);
         }
         if (closeSocket) close(connection.session);
     }
@@ -286,8 +292,8 @@ public class DanmuWebSocketServer {
 
     private static Integer parseVid(String vid) {
         try {
+            if (vid == null || !vid.matches("[1-9][0-9]*")) throw new NumberFormatException();
             Integer value = Integer.valueOf(vid);
-            if (value <= 0) throw new NumberFormatException();
             return value;
         } catch (RuntimeException exception) {
             throw new DanmuSubmitException(DanmuProtocolErrorCode.INVALID_VIDEO_ID);
@@ -296,6 +302,14 @@ public class DanmuWebSocketServer {
 
     private static boolean validRequestId(String requestId) {
         return requestId != null && requestId.length() <= 64 && requestId.matches("[A-Za-z0-9_-]+");
+    }
+
+    private static void ensureBodyVid(JSONObject frame, Integer videoId) {
+        if (!frame.containsKey("vid")) return;
+        Integer bodyVid = frame.getInteger("vid");
+        if (bodyVid == null || !bodyVid.equals(videoId)) {
+            throw new DanmuSubmitException(DanmuProtocolErrorCode.INVALID_VIDEO_ID);
+        }
     }
 
     private static String parameter(Session session, String name) {
@@ -315,15 +329,17 @@ public class DanmuWebSocketServer {
 
     private static final class Connection {
         private final Session session;
-        private final String vid;
+        private final Integer videoId;
+        private final String roomKey;
         private final boolean v1;
         private final AtomicBoolean removed = new AtomicBoolean(false);
         private final DanmuSessionSender sender;
         private volatile long lastSeen = System.currentTimeMillis();
 
-        private Connection(Session session, String vid, boolean v1) {
+        private Connection(Session session, Integer videoId, String roomKey, boolean v1) {
             this.session = session;
-            this.vid = vid;
+            this.videoId = videoId;
+            this.roomKey = roomKey;
             this.v1 = v1;
             this.sender = new DanmuSessionSender(session, sendExecutor, scheduler, () -> disconnect(this, true));
         }
