@@ -69,6 +69,14 @@ public class RedisUtil {
     }
 
     /**
+     * Atomically stores a value only when the key does not already exist.
+     */
+    public boolean setIfAbsent(String key, Object value, long time) {
+        Boolean stored = redisTemplate.opsForValue().setIfAbsent(key, value, time, TimeUnit.SECONDS);
+        return Boolean.TRUE.equals(stored);
+    }
+
+    /**
      * 清楚指定key的缓存
      * @param key
      */

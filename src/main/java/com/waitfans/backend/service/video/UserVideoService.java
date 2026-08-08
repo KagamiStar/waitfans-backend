@@ -4,14 +4,6 @@ import com.waitfans.backend.pojo.UserVideo;
 
 public interface UserVideoService {
     /**
-     * 更新播放次数以及最近播放时间，顺便返回记录信息，没有记录则创建新记录
-     * @param uid   用户ID
-     * @param vid   视频ID
-     * @return 更新后的数据信息
-     */
-    UserVideo updatePlay(Integer uid, Integer vid);
-
-    /**
      * 点赞或点踩，返回更新后的信息
      * @param uid   用户ID
      * @param vid   视频ID

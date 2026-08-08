@@ -15,4 +15,11 @@ class MediaSecurityRouteTest {
         assertFalse(pathMatcher.match("/media/video/*", "/media/video/10/preview-token"));
         assertTrue(pathMatcher.match("/media/preview/**", "/media/preview/10"));
     }
+
+    @Test
+    void unifiedPlayRouteDoesNotReopenLegacyVisitorEndpoint() {
+        assertTrue(pathMatcher.match("/video/play", "/video/play"));
+        assertFalse(pathMatcher.match("/video/play", "/video/play/visitor"));
+        assertFalse(pathMatcher.match("/video/play", "/video/play/user"));
+    }
 }

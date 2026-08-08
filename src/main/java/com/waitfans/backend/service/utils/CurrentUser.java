@@ -6,6 +6,7 @@ import com.waitfans.backend.service.impl.user.UserDetailsImpl;
 import com.waitfans.backend.utils.RedisUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
@@ -23,9 +24,23 @@ public class CurrentUser {
      * @return 当前登录用户的uid
      */
     public Integer getUserId() {
-        UsernamePasswordAuthenticationToken authenticationToken =
-                (UsernamePasswordAuthenticationToken) SecurityContextHolder.getContext().getAuthentication();
-        UserDetailsImpl loginUser = (UserDetailsImpl) authenticationToken.getPrincipal();
+        Integer userId = getUserIdOrNull();
+        if (userId == null) {
+            throw new IllegalStateException("No authenticated user");
+        }
+        return userId;
+    }
+
+    /**
+     * Returns the authenticated uid when a valid JWT filter populated the security context.
+     */
+    public Integer getUserIdOrNull() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (!(authentication instanceof UsernamePasswordAuthenticationToken)
+                || !(authentication.getPrincipal() instanceof UserDetailsImpl)) {
+            return null;
+        }
+        UserDetailsImpl loginUser = (UserDetailsImpl) authentication.getPrincipal();
         User suser = loginUser.getUser();   // 这里的user是登录时存的security:user，因为是静态数据，可能会跟实际的有区别，所以只能用作获取uid用
         return suser.getUid();
     }

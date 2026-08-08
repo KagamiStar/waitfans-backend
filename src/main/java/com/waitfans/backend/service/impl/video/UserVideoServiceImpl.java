@@ -44,37 +44,6 @@ public class UserVideoServiceImpl implements UserVideoService {
     private Executor taskExecutor;
 
     /**
-     * 更新播放次数以及最近播放时间，顺便返回记录信息，没有记录则创建新记录
-     * @param uid   用户ID
-     * @param vid   视频ID
-     * @return 更新后的数据信息
-     */
-    @Override
-    public UserVideo updatePlay(Integer uid, Integer vid) {
-        QueryWrapper<UserVideo> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("uid", uid).eq("vid", vid);
-        UserVideo userVideo = userVideoMapper.selectOne(queryWrapper);
-        if (userVideo == null) {
-            // 记录不存在，创建新记录
-            userVideo = new UserVideo(null, uid, vid, 1, 0, 0, 0, 0, new Date(), null, null);
-            userVideoMapper.insert(userVideo);
-        } else if (System.currentTimeMillis() - userVideo.getPlayTime().getTime() <= 30000) {
-            // 如果最近30秒内播放过则不更新记录，直接返回
-            return userVideo;
-        } else {
-            userVideo.setPlay(userVideo.getPlay() + 1);
-            userVideo.setPlayTime(new Date());
-            userVideoMapper.updateById(userVideo);
-        }
-        // 异步线程更新video表和redis
-        CompletableFuture.runAsync(() -> {
-            redisUtil.zset("user_video_history:" + uid, vid);   // 添加到/更新观看历史记录
-            videoStatsService.updateStats(vid, "play", true, 1);
-        }, taskExecutor);
-        return userVideo;
-    }
-
-    /**
      * 点赞或点踩，返回更新后的信息
      * @param uid   用户ID
      * @param vid   视频ID

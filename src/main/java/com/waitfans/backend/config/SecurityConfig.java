@@ -104,7 +104,7 @@ public class SecurityConfig {
                                 "/ws/danmu/**",
                                 "/danmu-list/**",
                                 "/msg/chat/outline",
-                                "/video/play/visitor",
+                                "/video/play",
                                 "/favorite/get-all/visitor",
                                 "/search/**",
                                 "/comment/get",
