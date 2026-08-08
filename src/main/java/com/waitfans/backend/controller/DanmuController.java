@@ -9,7 +9,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Set;
 
 @RestController
 public class DanmuController {
@@ -29,20 +28,11 @@ public class DanmuController {
      */
     @GetMapping("/danmu-list/{vid}")
     public CustomResponse getDanmuList(@PathVariable("vid") String vid) {
-        List<Danmu> danmuList = null;
+        List<Danmu> danmuList = danmuService.getPublishedDanmuList(Integer.parseInt(vid));
         try {
-            Set<Object> idset = redisUtil.getMembers("danmu_idset:" + vid);
-            danmuList = danmuService.getDanmuListByIdset(idset);
+            for (Danmu danmu : danmuList) redisUtil.addMember("danmu_idset:" + vid, danmu.getId());
         } catch (RuntimeException ignored) {
-            // Redis is a cache. Fall back to the authoritative database below.
-        }
-        if (danmuList == null) {
-            danmuList = danmuService.getPublishedDanmuList(Integer.parseInt(vid));
-            try {
-                for (Danmu danmu : danmuList) redisUtil.addMember("danmu_idset:" + vid, danmu.getId());
-            } catch (RuntimeException ignored) {
-                // Cache rebuild is best effort and must not hide committed danmu.
-            }
+            // Redis is a cache. A rebuild failure must not hide committed danmu.
         }
         CustomResponse customResponse = new CustomResponse();
         customResponse.setData(danmuList);
