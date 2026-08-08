@@ -14,6 +14,8 @@ public interface DanmuService {
      */
     List<Danmu> getDanmuListByIdset(Set<Object> idset);
 
+    List<Danmu> getPublishedDanmuList(Integer vid);
+
     /**
      * 删除弹幕
      * @param id    弹幕id

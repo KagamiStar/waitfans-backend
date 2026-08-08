@@ -1,0 +1,18 @@
+package com.waitfans.backend.component.danmu.protocol;
+
+public enum DanmuProtocolErrorCode {
+    MALFORMED_FRAME,
+    UNSUPPORTED_VERSION,
+    UNSUPPORTED_TYPE,
+    MISSING_REQUEST_ID,
+    AUTH_REQUIRED,
+    AUTH_EXPIRED,
+    VIDEO_NOT_FOUND,
+    VIDEO_NOT_PUBLIC,
+    CONTENT_INVALID,
+    STYLE_INVALID,
+    TIME_POINT_INVALID,
+    RATE_LIMITED,
+    SEND_FAILED,
+    SERVICE_UNAVAILABLE
+}

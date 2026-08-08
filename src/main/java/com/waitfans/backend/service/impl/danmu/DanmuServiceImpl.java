@@ -49,6 +49,11 @@ public class DanmuServiceImpl implements DanmuService {
     }
 
     @Override
+    public List<Danmu> getPublishedDanmuList(Integer vid) {
+        return danmuMapper.selectList(new QueryWrapper<Danmu>().eq("vid", vid).eq("state", 1));
+    }
+
+    @Override
     @Transactional
     public CustomResponse deleteDanmu(Integer id, Integer uid, boolean isAdmin) {
         CustomResponse customResponse = new CustomResponse();

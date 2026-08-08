@@ -29,8 +29,21 @@ public class DanmuController {
      */
     @GetMapping("/danmu-list/{vid}")
     public CustomResponse getDanmuList(@PathVariable("vid") String vid) {
-        Set<Object> idset = redisUtil.getMembers("danmu_idset:" + vid);
-        List<Danmu> danmuList = danmuService.getDanmuListByIdset(idset);
+        List<Danmu> danmuList = null;
+        try {
+            Set<Object> idset = redisUtil.getMembers("danmu_idset:" + vid);
+            danmuList = danmuService.getDanmuListByIdset(idset);
+        } catch (RuntimeException ignored) {
+            // Redis is a cache. Fall back to the authoritative database below.
+        }
+        if (danmuList == null) {
+            danmuList = danmuService.getPublishedDanmuList(Integer.parseInt(vid));
+            try {
+                for (Danmu danmu : danmuList) redisUtil.addMember("danmu_idset:" + vid, danmu.getId());
+            } catch (RuntimeException ignored) {
+                // Cache rebuild is best effort and must not hide committed danmu.
+            }
+        }
         CustomResponse customResponse = new CustomResponse();
         customResponse.setData(danmuList);
         return customResponse;
